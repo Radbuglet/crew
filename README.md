@@ -177,7 +177,7 @@ class PhysicalObject {
     // as part of the class.
     inline val velocity: Vec3;
     
-    pub fn new() -> Self {
+    pub static fn new() -> Self {
         Self {
             velocity: Vec3.zero(),
             // input member fields do not require initialization
@@ -229,9 +229,7 @@ class PluginBase {
     var stage: Stage;
     in val base_handler: IPluginHandler;
     
-    pub val active: bool => self.stage.active;
-    
-    pub fn new() -> Self {
+    pub static fn new() -> Self {
         Self {
             stage: Stage.Stopped,
             // input member fields do not require initialization
@@ -268,16 +266,9 @@ class IPluginHandler {
 }
 
 enum Stage {
-    // The brackets specify constructor arguments for each member of enum metadata.
-    Stopped[active: false],
-    PreInit[active: true],
-    Running[active: true];
-    
-    val active: bool;
-    
-    fn new(active: bool) -> Self {
-        Self { active }
-    }
+    Stopped,
+    PreInit,
+    Running,
 }
 ```
 
