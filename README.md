@@ -16,52 +16,52 @@ The `out` keyword is technically the only keyword required to start composing cl
 
 ```
 class Player {
-	// Expose the entire "Entity" class.
-	out val entity: Entity;
-	
-	// Expose only the "Spatial" sub-component of the "Sprite".
-	out(Spatial) val sprite: Sprite;
-	
-	// "pub" means that the function is globally available. Without "pub", this method would
-	// be class internal.
-	pub fn update_player_state() {
-		// This ellipsis is syntax for an unimplemented method with similar semantics to
-		// a "TODO" comment. Reaching an ellipsis will cause the program to panic.
-		...
-	}
+    // Expose the entire "Entity" class.
+    out val entity: Entity;
+    
+    // Expose only the "Spatial" sub-component of the "Sprite".
+    out(Spatial) val sprite: Sprite;
+    
+    // "pub" means that the function is globally available. Without "pub", this method would
+    // be class internal.
+    pub fn update_player_state() {
+        // This ellipsis is syntax for an unimplemented method with similar semantics to
+        // a "TODO" comment. Reaching an ellipsis will cause the program to panic.
+        ...
+    }
 }
 
 class Entity {
-	pub fn update_entity_state() {
-		...
-	}
+    pub fn update_entity_state() {
+        ...
+    }
 }
 
 class Sprite {
-	out val spatial: Spatial;
-	
-	pub fn render() {
-		...
-	}
+    out val spatial: Spatial;
+    
+    pub fn render() {
+        ...
+    }
 }
 
 class Spatial {
-	pub fn move_up() {
-		...
-	}
+    pub fn move_up() {
+        ...
+    }
 }
 
 fn tick_player(player: Player) {
-	player.update_player_state();  // Call to methods in "Player".
-	player.move_up();  // Call to component methods in "Spatial".
-	update_entity(player);  // Upcast to "Entity" component.
+    player.update_player_state();  // Call to methods in "Player".
+    player.move_up();  // Call to component methods in "Spatial".
+    update_entity(player);  // Upcast to "Entity" component.
 }
 
 fn update_entity(entity: Entity) {
-	entity.update_entity_state();
-	
-	// Downcast to the parent "Player" class.
-	assert!((entity as? Player).is_some());
+    entity.update_entity_state();
+    
+    // Downcast to the parent "Player" class.
+    assert!((entity as? Player).is_some());
 }
 ```
 
@@ -79,50 +79,50 @@ Users can sacrifice the ability to be down-casted into by opting out of `out`'s 
 // The "out" qualifier in front of the generic parameter "T" means that the parameter is
 // covariant.
 class WithCounter<out T> {
-	// "ref" qualifies "out" and prevents the default behavior of inlining the value.
-	out ref val target: T;
-	
-	// This is just a normal mutable property.
-	var count_: u32;
-	
-	// The "static" qualifier turns this method into a static method. There are no default
-	// constructors in Crew.
-	pub static fn new(target: T) -> Self {
-		Self {
-			target,
-			count_: 0
-		}
-	}
-	
-	// "count" is a readonly property.
-	pub val count: u32 => self.count_;
-	
-	pub fn add_one() {
-		self.count_ += 1;
-	}
+    // "ref" qualifies "out" and prevents the default behavior of inlining the value.
+    out ref val target: T;
+    
+    // This is just a normal mutable property.
+    var count_: u32;
+    
+    // The "static" qualifier turns this method into a static method. There are no default
+    // constructors in Crew.
+    pub static fn new(target: T) -> Self {
+        Self {
+            target,
+            count_: 0
+        }
+    }
+    
+    // "count" is a readonly property.
+    pub val count: u32 => self.count_;
+    
+    pub fn add_one() {
+        self.count_ += 1;
+    }
 }
 
 class TargetClass {
-	pub static fn new() -> Self {
-		Self {}
-	}
-	
-	pub fn do_something() {
-		...
-	}
+    pub static fn new() -> Self {
+        Self {}
+    }
+    
+    pub fn do_something() {
+        ...
+    }
 }
 
 fn example() {
-	val target = TargetClass.new();
-	
-	val wrapper = WithCounter.new(target);
-	wrapper.do_something();  // Call to method in target "do_something".
-	wrapper.add_one();  // Call to wrapper method "add_one".
-	
-	val unwrapped: TargetClass = wrapper;  // Upcast to "TargetClass".
-	// We cannot downcast "unwrapped" back to the "WithCounter" wrapper instance because it
-	// isn't part of the "target"'s identity.
-	assert!((unwrapped as? WithCounter).is_none());
+    val target = TargetClass.new();
+    
+    val wrapper = WithCounter.new(target);
+    wrapper.do_something();  // Call to method in target "do_something".
+    wrapper.add_one();  // Call to wrapper method "add_one".
+    
+    val unwrapped: TargetClass = wrapper;  // Upcast to "TargetClass".
+    // We cannot downcast "unwrapped" back to the "WithCounter" wrapper instance because it
+    // isn't part of the "target"'s identity.
+    assert!((unwrapped as? WithCounter).is_none());
 }
 ```
 
@@ -132,17 +132,17 @@ On the flip-side, users can inline a class without exposing it using the `inline
 
 ```
 class Parent {
-	pub inline val child: Child;
+    pub inline val child: Child;
 }
 
 class Child {}
 
 fn example(parent: Parent) {
-	// Fetch the child.
-	val child = parent.child;
-	
-	// Down-cast back to the parent
-	assert!((child as? Parent).is_some());
+    // Fetch the child.
+    val child = parent.child;
+    
+    // Down-cast back to the parent
+    assert!((child as? Parent).is_some());
 }
 ```
 
@@ -152,50 +152,50 @@ To address the efficiency concerns of composition, Crew introduces two new quali
 
 ```
 class Player {
-	// The "impl" qualifier takes a list of paths to the input members that require a value.
-	// If any input members of a class' children do not receive their value, the parent class
-	// will automatically forward these inputs to its consumers.
-	impl(physical.spatial, sprite.spatial)
-		// Any field/property, so long as it provides a superset of the guarantees required by
-		// the "in" prototypes, is accepted here.
-		inline var spatial: Spatial;
-	
-	out val physical: PhysicalObject;
-	out val sprite: Sprite;
+    // The "impl" qualifier takes a list of paths to the input members that require a value.
+    // If any input members of a class' children do not receive their value, the parent class
+    // will automatically forward these inputs to its consumers.
+    impl(physical.spatial, sprite.spatial)
+        // Any field/property, so long as it provides a superset of the guarantees required by
+        // the "in" prototypes, is accepted here.
+        inline var spatial: Spatial;
+    
+    out val physical: PhysicalObject;
+    out val sprite: Sprite;
 }
 
 class Spatial {
-	pub val pos: Vec3;
+    pub val pos: Vec3;
 }
 
 class PhysicalObject {
-	// "in" defines a prototype for a class member to be provided by an "impl" qualified member
-	// in a parent class.
-	in val spatial: Spatial;
-	
-	// Crew doesn't need an explicit datatype defining mechanism. We can just inline the value
-	// as part of the class.
-	inline val velocity: Vec3;
-	
-	pub fn new() -> Self {
-		Self {
-			velocity: Vec3.zero(),
-			// input member fields do not require initialization
-		}
-	}
-	
-	pub fn move() {
-		// We can access input member prototypes as we would any other class member.
-		self.spatial.pos += self.velocity;  // Yes, we support operator overloads.
-	}
+    // "in" defines a prototype for a class member to be provided by an "impl" qualified member
+    // in a parent class.
+    in val spatial: Spatial;
+    
+    // Crew doesn't need an explicit datatype defining mechanism. We can just inline the value
+    // as part of the class.
+    inline val velocity: Vec3;
+    
+    pub fn new() -> Self {
+        Self {
+            velocity: Vec3.zero(),
+            // input member fields do not require initialization
+        }
+    }
+    
+    pub fn move() {
+        // We can access input member prototypes as we would any other class member.
+        self.spatial.pos += self.velocity;  // Yes, we support operator overloading.
+    }
 }
 
 class Sprite {
-	in val spatial: Spatial;
-	
-	pub fn draw() {
-		draw_sprite_at(self.spatial.pos);
-	}
+    in val spatial: Spatial;
+    
+    pub fn draw() {
+        draw_sprite_at(self.spatial.pos);
+    }
 }
 ```
 
@@ -203,81 +203,81 @@ Input members behave almost identically to normal members, which means that they
 
 ```
 class Plugin {
-	out val base: PluginBase;
-	
-	// This is an "impl" block. The wildcard specifies that members will be automatically
-	// associated with their identically named input members, ignoring any leading underscores.
-	impl(base.base_handler.*) {
+    out val base: PluginBase;
+    
+    // This is an "impl" block. The wildcard specifies that members will be automatically
+    // associated with their identically named input members, ignoring any leading underscores.
+    impl(base.base_handler.*) {
         // Since "impl" members don't have to be public, this allows us to implement an internal
         // interface without exposing it or creating any internal classes.
         
         fn _onInit() {
-        	...
+            ...
         }
         
-		fn _onEnable() {
-			...
-		}
-		
-		fn _onDisable() {
-			...
-		}
-	}
+        fn _onEnable() {
+            ...
+        }
+        
+        fn _onDisable() {
+            ...
+        }
+    }
 }
 
 class PluginBase {
-	var stage: Stage;
-	in val base_handler: IPluginHandler;
-	
-	pub val active: bool => self.stage.active;
-	
-	pub fn new() -> Self {
-		Self {
-			stage: Stage.Stopped,
-			// input member fields do not require initialization
-		}
-	}
-	
-	// "impl" blocks can be affixed directly to the field requiring the inputs. This is equivalent
-	// to defining the impl block "impl(_handler.*)".
-	out val _handler: IPluginHandler impl {
-		fn _onInit() {
-			assert!(self.stage == Stage.Stopped);
-			self.stage = Stage.PreInit;
-			self.base_handler.onInit();
-		}
-		
-		fn _onEnable() {
-			assert!(self.stage == Stage.PreInit);
-			self.stage = Stage.Running;
-			self.base_handler.onEnable();
-		}
-		
-		fn _onDisable() {
-			assert!(self.stage == Stage.Running);
-			self.stage = Stage.Stopped;
-			self.base_handler.onDisable();
-		}
-	}
+    var stage: Stage;
+    in val base_handler: IPluginHandler;
+    
+    pub val active: bool => self.stage.active;
+    
+    pub fn new() -> Self {
+        Self {
+            stage: Stage.Stopped,
+            // input member fields do not require initialization
+        }
+    }
+    
+    // "impl" blocks can be affixed directly to the field requiring the inputs. This is equivalent
+    // to defining the impl block "impl(_handler.*)".
+    out val _handler: IPluginHandler impl {
+        fn _onInit() {
+            assert!(self.stage == Stage.Stopped);
+            self.stage = Stage.PreInit;
+            self.base_handler.onInit();
+        }
+        
+        fn _onEnable() {
+            assert!(self.stage == Stage.PreInit);
+            self.stage = Stage.Running;
+            self.base_handler.onEnable();
+        }
+        
+        fn _onDisable() {
+            assert!(self.stage == Stage.Running);
+            self.stage = Stage.Stopped;
+            self.base_handler.onDisable();
+        }
+    }
 }
 
 class IPluginHandler {
-	pub in fn onInit();
-	pub in fn onEnable();
-	pub in fn onDisable();
+    pub in fn onInit();
+    pub in fn onEnable();
+    pub in fn onDisable();
 }
 
 enum Stage {
-	// The brackets specify constructor arguments for each member of enum metadata.
-	Stopped[active: false],
-	PreInit[active: true],
-	Running[active: true];
-	
-	val active: bool;
-	
-	fn new(active: bool) -> Self {
-		Self { active }
-	}
+    // The brackets specify constructor arguments for each member of enum metadata.
+    Stopped[active: false],
+    PreInit[active: true],
+    Running[active: true];
+    
+    val active: bool;
+    
+    fn new(active: bool) -> Self {
+        Self { active }
+    }
 }
 ```
 
