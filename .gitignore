@@ -1,0 +1,6 @@
+# Build artifacts
+target/
+
+# IDEs
+.idea/
+*.iml
