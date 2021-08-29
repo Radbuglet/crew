@@ -4,9 +4,9 @@ Crew is an object-oriented programming language which uses composition as its so
 
 ## Motivation
 
-One of object-oriented programming's largest pain point is its typical lack of multiple inheritance. Language designers typically omit this feature because of [the diamond problem](https://en.wikipedia.org/wiki/Multiple_inheritance#The_diamond_problem), an ambiguity created when a subclass inherits two or more superclasses which in turn override a common virtual method in a shared ancestor class. Languages that do support multiple inheritance generally solve this problem by requiring the user to manually resolve the conflict. While this does enable multiple inheritance, this solution is both error prone and subtly inflexible. Fundamentally, inheritance is flawed because there can only be one instance of each class in the inheritance hierarchy. This causes problems when a class expects exclusive ownership over its superclass (e.g. it expects that specific method overrides will be applied to the parent class or that no external actor will manipulate the underlying state). Inheritance fails to provide this encapsulation because every class in the hierarchy is both a singleton and is publicly available to the entire class hierarchy.
+One of object-oriented programming's largest pain point is its typical lack of multiple inheritance. Language designers usually omit this feature because of [the diamond problem](https://en.wikipedia.org/wiki/Multiple_inheritance#The_diamond_problem), an ambiguity created when a subclass inherits two or more superclasses which in turn override a common virtual method in a shared ancestor class. Languages that do support multiple inheritance generally solve this problem by requiring the user to manually resolve the conflict. While this does enable multiple inheritance, this solution is both error prone and subtly inflexible. Fundamentally, inheritance is flawed because there can only be one instance of each class in the class hierarchy. This causes problems when a class expects exclusive ownership over its superclasses (e.g. it expects that specific method overrides will be applied to the parent class or that no external actor will manipulate the underlying state), a guarantee that cannot exist because every class in the hierarchy is both a singleton and is publicly available to the entire class hierarchy.
 
-To solve these issues, this language proposes composition semantics as its primary inheritance mechanism. Composition is a far more powerful model for behavioral inheritance than inheritance, as it allows users to specify which instance is being "extended" with the same granularity as one would reference any other field. Furthermore, components enjoy the same encapsulation mechanisms as normal class state. Composition is by no means unique to Crew, as the strategy is merely a consequence of being able to store class references in fields. However, composition in most other object-oriented programming languages is terribly half-baked as these languages do not include mechanisms to inherit component interfaces efficiently in a way that preserves definitional encapsulation. Furthermore, composition is generally less memory efficient than inheritance since each class in the component tree is allocated separately and require a network of fields to reference component dependencies. Solving these pain points is the *raison d'être* of Crew.
+To solve these issues, this language proposes composition semantics as its primary inheritance mechanism. Composition is a far more powerful model for behavioral inheritance than inheritance, as it allows users to specify which instance is being "extended" with the same granularity as one would reference any other field. Furthermore, components enjoy the same encapsulation mechanisms as normal class state. Composition is by no means unique to Crew, as the strategy is merely a consequence of being able to store class references in fields. However, composition in most other object-oriented programming languages is terribly half-baked as these languages do not include mechanisms to inherit component interfaces efficiently in a way that preserves definitional encapsulation. Furthermore, composition is generally less memory efficient than inheritance because each class in the component tree is allocated separately and requires a network of fields to reference component dependencies. Solving these pain points is the *raison d'être* of Crew.
 
 ## Composition
 
@@ -26,7 +26,7 @@ class Player {
     // be class internal.
     pub fn update_player_state() {
         // This ellipsis is syntax for an unimplemented method with similar semantics to
-        // a "TODO" comment. Reaching an ellipsis will cause the program to panic.
+        // a "to-do" comment. Reaching an ellipsis will cause the program to panic.
         ...
     }
 }
@@ -38,6 +38,8 @@ class Entity {
 }
 
 class Sprite {
+	// All sprites must also be "subclasses" of "Spatial". There is no way to get a "Sprite"
+	// instance without including its exposed sub-components.
     out val spatial: Spatial;
     
     pub fn render() {
@@ -65,96 +67,89 @@ fn update_entity(entity: Entity) {
 }
 ```
 
-**TODO:** Document `out` collision resolution and its useful encapsulation properties.
-
-**TODO:** Document generics, variance and its ambiguity, determine precise behavior of exposing generic parameters.
-
-Components exposed using `out` are *inlined* into their parent's definition, with all inlined components in a component tree being sharing the same identity. This allows users to downcast components back into any other component with the same identity, at the expense of limiting users to expose the class under one component tree (although the same component can be exposed several times, so long as it is exposed with the same identity).
-
-**TODO:** Determine how to handle the transfer of ownership efficiently (introduce an `inline` qualifier for the stack member?).
-
-Users can sacrifice the ability to be down-casted into by opting out of `out`'s inlining and identity merging behavior. This is useful for defining wrapper classes that expose the interface of the underlying type.
+Exposing in Crew is functionally more similar to manual interface delegation than to component resolution. To a user, this means that a parent class upcasted to a component class will still result in a reference the parent class, causing both references to have pointer equality and the ability to cast to each other, whereas directly referencing the implementer instance will retrieve a reference to the component instance, with the direct reference lacking the ability to downcast to its parent.
 
 ```
-// The "out" qualifier in front of the generic parameter "T" means that the parameter is
-// covariant.
-class WithCounter<out T> {
-    // "ref" qualifies "out" and prevents the default behavior of inlining the value.
-    out ref val target: T;
-    
-    // This is just a normal mutable property.
-    var count_: u32;
-    
-    // The "static" qualifier turns this method into a static method. There are no default
-    // constructors in Crew.
-    pub static fn new(target: T) -> Self {
-        Self {
-            target,
-            count_: 0
-        }
-    }
-    
-    // "count" is a readonly property.
-    pub val count: u32 => self.count_;
-    
-    pub fn add_one() {
-        self.count_ += 1;
-    }
-}
+// "ptr_eq" is a standard library intrinsic for checking pointer equality.
+use std.ptr_eq;
 
-class TargetClass {
-    pub static fn new() -> Self {
-        Self {}
-    }
-    
-    pub fn do_something() {
-        ...
-    }
-}
-
-fn example() {
-    val target = TargetClass.new();
-    
-    val wrapper = WithCounter.new(target);
-    wrapper.do_something();  // Call to method in target "do_something".
-    wrapper.add_one();  // Call to wrapper method "add_one".
-    
-    val unwrapped: TargetClass = wrapper;  // Upcast to "TargetClass".
-    // We cannot downcast "unwrapped" back to the "WithCounter" wrapper instance because it
-    // isn't part of the "target"'s identity.
-    assert!((unwrapped as? WithCounter).is_none());
-}
-```
-
-On the flip-side, users can inline a class without exposing it using the `inline` field qualifier. Inlined fields have full down-casting support.
-
-**TODO:** Should we make identity merging optional? (e.g. for `Vec3`)
-
-```
 class Parent {
-    pub inline val child: Child;
+	// Since components are just normal fields/properties, we can make them public as we would with any other
+	// class member.
+	pub out val child: Child;
 }
 
 class Child {}
 
-fn example(parent: Parent) {
-    // Fetch the child.
-    val child = parent.child;
-    
-    // Down-cast back to the parent
-    assert!((child as? Parent).is_some());
+fn eq(parent: Parent) {
+	// Upcasting preserves reference identity.
+	val child_casted: Child = parent;
+	assert!(ptr_eq(parent, child_casted));
+	
+	// Accessing the exposed class instance directly produces a physically different reference.
+	val child_ref = parent.child;
+	assert!(!ptr_eq(child_casted, child_ref));
+	
+	// Users can only downcast to other components exposed by the same underlying class instance.
+	// This cast is valid because "child_casted" points to the same object as "parent".
+	assert!((child_casted as? Parent).is_some());
+	
+	// This downcast is not valid because "child_ref" points to an instance of "Child", which does not
+	// expose "Parent".
+	assert!((child_ref as? Parent).is_none());
 }
 ```
 
+This decision liberates users to expose components within multiple parent classes simultaneously and allows the parent class to change which class instance is being exposed while users are referencing it.
+
+Exposition comes in two flavors: static and dynamic. Static exposition resolves the interface of the object from concrete types, omitting everything that isn't part of that type. V-tables involving statically exposed components can be prepared ahead of time and generally result in higher efficiency. Unqualified `out` is a form of static exposition and will infer the exposed type from the type of the field or parameter.
+
+Static exposition qualifiers are closed by default, meaning that they cannot be overridden by any other closed exposed components. This has the useful encapsulation property of allowing users to guarantee that a class exposing a parent class will necessarily also expose its exact sub-component instance.
+
+```
+class Root {
+	out val container: Container;
+	
+	// This line does not compile because it conflicts with "Container"'s exposed "Bindable" instance.
+	// out val my_bindable: Bindable;
+}
+
+class Container {
+	pub out val bindable: Bindable;
+}
+
+class Bindable {
+	pub var is_bound: bool;
+}
+
+fn test(container: Container) {
+	// The passed class' "Bindable" instance is guaranteed to be "Container"'s instance because "Container"
+	// is contained within the root's component tree, regardless of everything else the user exposes.
+	assert!(container.is_bound == container.bindable.is_bound);
+}
+```
+
+Users can allow exposed components to be overridden by qualifying it with the `open` qualifier. Non-`open` properties will always override `open` ones. In the case where two or more components collide but all of them have the `open` qualifier, the component exposed the latest in the class will be selected. (**TODO:** change this behavior to be more reliable). In cases where generic parameters are exposed statically, the type checker cannot prove that the concrete type of the parameter will not interfere with existing components, requiring the `open` qualifier.
+
+```
+// TODO: Example
+```
+
+**TODO:** Document dynamic exposition and how it interacts with meta-programming and component resolution.
+
+**TODO:** Inlining (update `in` section).
+
+**TODO:** Document generic parameter variance, its limits when used in conjunction with static exposition, and potential variance ambiguities
+
 ---
 
-To address the efficiency concerns of composition, Crew introduces two new qualifiers: `in` and `impl`. `in` and `impl` come in pairs. `in` defines a dependency on a member and `impl` provides an implementation of that dependency. By declaring dependencies using this new system, the compiler can store specializations in the form of relative component offsets as part of the object's v-table, making component dependencies zero-cost in terms of their memory footprint.
+To address the efficiency concerns of composition, Crew introduces two additional qualifiers: `in` and `impl`. `in` and `impl` come in pairs. `in` defines a dependency on a member and `impl` provides an implementation of that dependency. By declaring dependencies using this new system, the compiler can store specializations in the form of relative component offsets as part of the object's v-table, making component dependencies zero-cost in terms of their memory footprint.
 
 ```
 class Player {
-    // The "impl" qualifier takes a list of paths to the input members that require a value.
-    // If any input members of a class' children do not receive their value, the parent class
-    // will automatically forward these inputs to its consumers.
+    // The "impl" qualifier takes a list of paths to the input members that require a concrete
+    // member. If any input members of a class' children do not receive their value, the parent
+    // class will automatically forward these inputs to its consumers.
     impl(physical.spatial, sprite.spatial)
         // Any field/property, so long as it provides a superset of the guarantees required by
         // the "in" prototypes, is accepted here.
@@ -173,10 +168,12 @@ class PhysicalObject {
     // in a parent class.
     in val spatial: Spatial;
     
-    // Crew doesn't need an explicit datatype defining mechanism. We can just inline the value
-    // as part of the class.
+    // Crew doesn't need an explicit value-type mechanism. We can just inline the value as part
+    // of the class.
     inline val velocity: Vec3;
     
+    // There is no notion of a default constructor in Crew. Instead, users provide a suite of
+    // static constructor methods.
     pub static fn new() -> Self {
         Self {
             velocity: Vec3.zero(),
@@ -272,7 +269,13 @@ enum Stage {
 }
 ```
 
-**TODO:** Delegate types?
+**TODO:** Delegate types as a runtime version of `in fn`.
+
+**TODO:** Static metadata and sum type features for enums.
+
+**TODO:** Allow scope-qualification in `in` to limit who can implement a property.
+
+**TODO:** Require users to qualify unsealed dependencies with `open`.
 
 
 
@@ -287,8 +290,7 @@ enum Stage {
 **TODO:** Determine...
 
 - Memory model
-- Component casting
-- Input monomorphization (opt-in dependency monomorphization? Allow partial monomorphization for dispatch categorization?)
-- Instance embedding semantics
+- Component casting (pointer format, statically resolved caching)
+- Input monomorphization (opt-in dependency monomorphization? allow partial monomorphization for dispatch categorization?)
+- Instance inlining at runtime
 - VM interop and isolation
-
