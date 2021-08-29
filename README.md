@@ -38,8 +38,8 @@ class Entity {
 }
 
 class Sprite {
-	// All sprites must also be "subclasses" of "Spatial". There is no way to get a "Sprite"
-	// instance without including its exposed sub-components.
+    // All sprites must also be "subclasses" of "Spatial". There is no way to get a "Sprite"
+    // instance without including its exposed sub-components.
     out val spatial: Spatial;
     
     pub fn render() {
@@ -74,29 +74,29 @@ Exposing in Crew is functionally more similar to manual interface delegation tha
 use std.ptr_eq;
 
 class Parent {
-	// Since components are just normal fields/properties, we can make them public as we would with any other
-	// class member.
-	pub out val child: Child;
+    // Since components are just normal fields/properties, we can make them public as we would with any other
+    // class member.
+    pub out val child: Child;
 }
 
 class Child {}
 
 fn eq(parent: Parent) {
-	// Upcasting preserves reference identity.
-	val child_casted: Child = parent;
-	assert!(ptr_eq(parent, child_casted));
-	
-	// Accessing the exposed class instance directly produces a physically different reference.
-	val child_ref = parent.child;
-	assert!(!ptr_eq(child_casted, child_ref));
-	
-	// Users can only downcast to other components exposed by the same underlying class instance.
-	// This cast is valid because "child_casted" points to the same object as "parent".
-	assert!((child_casted as? Parent).is_some());
-	
-	// This downcast is not valid because "child_ref" points to an instance of "Child", which does not
-	// expose "Parent".
-	assert!((child_ref as? Parent).is_none());
+    // Upcasting preserves reference identity.
+    val child_casted: Child = parent;
+    assert!(ptr_eq(parent, child_casted));
+    
+    // Accessing the exposed class instance directly produces a physically different reference.
+    val child_ref = parent.child;
+    assert!(!ptr_eq(child_casted, child_ref));
+    
+    // Users can only downcast to other components exposed by the same underlying class instance.
+    // This cast is valid because "child_casted" points to the same object as "parent".
+    assert!((child_casted as? Parent).is_some());
+    
+    // This downcast is not valid because "child_ref" points to an instance of "Child", which does not
+    // expose "Parent".
+    assert!((child_ref as? Parent).is_none());
 }
 ```
 
@@ -108,24 +108,24 @@ Static exposition qualifiers are closed by default, meaning that they cannot be 
 
 ```
 class Root {
-	out val container: Container;
-	
-	// This line does not compile because it conflicts with "Container"'s exposed "Bindable" instance.
-	// out val my_bindable: Bindable;
+    out val container: Container;
+    
+    // This line does not compile because it conflicts with "Container"'s exposed "Bindable" instance.
+    // out val my_bindable: Bindable;
 }
 
 class Container {
-	pub out val bindable: Bindable;
+    pub out val bindable: Bindable;
 }
 
 class Bindable {
-	pub var is_bound: bool;
+    pub var is_bound: bool;
 }
 
 fn test(container: Container) {
-	// The passed class' "Bindable" instance is guaranteed to be "Container"'s instance because "Container"
-	// is contained within the root's component tree, regardless of everything else the user exposes.
-	assert!(container.is_bound == container.bindable.is_bound);
+    // The passed class' "Bindable" instance is guaranteed to be "Container"'s instance because "Container"
+    // is contained within the root's component tree, regardless of everything else the user exposes.
+    assert!(container.is_bound == container.bindable.is_bound);
 }
 ```
 
