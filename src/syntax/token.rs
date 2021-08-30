@@ -14,12 +14,16 @@
 //! - "homonymous character" warnings
 //! - Shebang ignoring
 //!
-//! TODO: Should we preserve spacing tokens so that tools like the linter can complain about them?
 
 // === Intermediate representation === //
 
-use crate::syntax::span::{CharOrEof, FileReader, ReadAtom, SourceFile};
+use crate::syntax::span::{CharOrEof, FileReader, ReadAtom, SourceFile, Span, SpanRef};
 use crate::util::enum_meta::{enum_meta, EnumMeta};
+use std::sync::Arc;
+
+pub trait AnyToken {
+    fn full_span(&self) -> SpanRef;
+}
 
 #[derive(Clone)]
 pub enum Token {
@@ -28,26 +32,58 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn debug_name(&self) -> &'static str {
+    pub fn as_any(&self) -> &dyn AnyToken {
         match self {
-            Token::Group(_) => "group",
-            Token::Ident(_) => "identifier",
+            Token::Group(group) => group as _,
+            Token::Ident(ident) => ident as _,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct TokenGroup {
-    tokens: Vec<Token>,
+    span: Span,
     delimiter: GroupDelimiter,
+    tokens: Arc<Vec<Token>>,
 }
 
 impl TokenGroup {
-    pub fn new(delimiter: GroupDelimiter) -> Self {
+    pub fn new(span: Span, delimiter: GroupDelimiter) -> Self {
         Self {
-            tokens: Vec::new(),
+            tokens: Arc::new(Vec::new()),
+            span,
             delimiter,
         }
+    }
+
+    pub fn new_with(span: Span, delimiter: GroupDelimiter, tokens: Arc<Vec<Token>>) -> Self {
+        Self {
+            tokens,
+            span,
+            delimiter,
+        }
+    }
+
+    pub fn delimiter(&self) -> GroupDelimiter {
+        self.delimiter
+    }
+
+    pub fn set_delimiter(&mut self, delimiter: GroupDelimiter) {
+        self.delimiter = delimiter;
+    }
+
+    pub fn tokens(&self) -> &Vec<Token> {
+        &self.tokens
+    }
+
+    pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
+        Arc::make_mut(&mut self.tokens)
+    }
+}
+
+impl AnyToken for TokenGroup {
+    fn full_span(&self) -> SpanRef {
+        self.span.as_ref()
     }
 }
 
@@ -59,12 +95,19 @@ impl Into<Token> for TokenGroup {
 
 #[derive(Clone)]
 pub struct TokenIdent {
+    span: Span,
     text: String,
 }
 
 impl Into<Token> for TokenIdent {
     fn into(self) -> Token {
         Token::Ident(self)
+    }
+}
+
+impl AnyToken for TokenIdent {
+    fn full_span(&self) -> SpanRef {
+        self.span.as_ref()
     }
 }
 
@@ -80,22 +123,22 @@ enum_meta! {
         },
         Paren = GroupDelimiterMeta {
             name: "parenthesis",
-            left: Some('('),
+            left: Some(CharOrEof::Char('(')),
             right: CharOrEof::Char(')'),
         },
         Brace = GroupDelimiterMeta {
             name: "brace",
-            left: Some('{'),
+            left: Some(CharOrEof::Char('{')),
             right: CharOrEof::Char('}'),
         },
         Bracket = GroupDelimiterMeta {
             name: "square bracket",
-            left: Some('['),
+            left: Some(CharOrEof::Char('[')),
             right: CharOrEof::Char(']'),
         },
         Angle = GroupDelimiterMeta {
             name: "angle bracket",
-            left: Some('<'),
+            left: Some(CharOrEof::Char('<')),
             right: CharOrEof::Char('>'),
         },
     }
@@ -104,17 +147,108 @@ enum_meta! {
 #[derive(Debug, Copy, Clone)]
 pub struct GroupDelimiterMeta {
     name: &'static str,
-    left: Option<char>,
+    left: Option<CharOrEof>,
     right: CharOrEof,
 }
 
-impl GroupDelimiter {
-    pub fn resolve(left: char) -> Option<GroupDelimiter> {
-        for (var, meta) in GroupDelimiter::values() {
-            if Some(left) == meta.left {
-                return Some(*var);
+// === Tokenizing === //
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+enum DelimiterMode {
+    Open,
+    Close,
+}
+
+enum FlatToken {
+    Delimiter(DelimiterMode, GroupDelimiter),
+    Ident(TokenIdent),
+}
+
+// TODO: Error reporting mechanisms
+
+pub fn tokenize_span(source: &SourceFile) -> TokenGroup {
+    let mut reader = source.reader();
+
+    // Consume shebang
+    consume_shebang(&mut reader);
+
+    // Parse flat token stream
+    let mut tokens = Vec::new();
+    loop {
+        // Parse whitespace
+        if consume_whitespace(&mut reader) {
+            continue;
+        }
+
+        // Parse group delimiters
+        if let Some((mode, delimiter)) = consume_delimiter(&mut reader) {
+            tokens.push(FlatToken::Delimiter(mode, delimiter));
+            continue;
+        }
+
+        // Parse identifiers
+        // TODO
+    }
+
+    // Transform flat token stream into grouped stream
+    // TODO
+}
+
+fn consume_shebang(reader: &mut FileReader) {
+    let mut lookahead = reader.clone();
+
+    // Magic "number"
+    if lookahead.consume() != ReadAtom::Codepoint('#') {
+        return;
+    }
+
+    if lookahead.consume() != ReadAtom::Codepoint('!') {
+        return;
+    }
+
+    // Read until line end
+    loop {
+        let spacing = lookahead.consume();
+        // We don't warn on illegal characters since we're not the one parsing this section.
+        if spacing.is_newline() || spacing == ReadAtom::Eof {
+            break;
+        }
+    }
+
+    // Commit
+    *reader = lookahead;
+}
+
+fn consume_seq(reader: &mut FileReader, seq: &[CharOrEof]) -> bool {
+    reader.lookahead(|reader| {
+        for pattern_char in seq {
+            if reader.consume().as_char() != *pattern_char {
+                return false;
+            }
+        }
+        true
+    })
+}
+
+fn consume_delimiter(reader: &mut FileReader) -> Option<(DelimiterMode, GroupDelimiter)> {
+    reader.lookahead(|reader| {
+        let char = reader.consume().as_char();
+        for (delimiter, meta) in GroupDelimiter::values() {
+            if meta.left == Some(char) {
+                return Some((DelimiterMode::Open, *delimiter));
+            }
+
+            if meta.right == char {
+                return Some((DelimiterMode::Close, *delimiter));
             }
         }
         None
-    }
+    })
+}
+
+fn consume_whitespace(reader: &mut FileReader) -> bool {
+    reader.lookahead(|reader| {
+        let atom = reader.consume();
+        atom.is_newline() || atom.as_char().to_char().is_whitespace()
+    })
 }

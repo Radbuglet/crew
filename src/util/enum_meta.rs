@@ -4,7 +4,7 @@ pub trait EnumMeta: Sized + Copy + Eq + Hash {
     type Meta;
 
     fn values() -> &'static [(Self, Self::Meta)];
-    fn meta_for(self) -> &'static Self::Meta;
+    fn meta(self) -> &'static Self::Meta;
 }
 
 pub macro enum_meta($(
@@ -32,7 +32,7 @@ pub macro enum_meta($(
             &Self::ITEMS
         }
 
-        fn meta_for(self) -> &'static Self::Meta {
+        fn meta(self) -> &'static Self::Meta {
             for (var, meta) in Self::values() {
                 if self == *var {
                     return meta;

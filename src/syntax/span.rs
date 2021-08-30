@@ -36,6 +36,13 @@ impl SourceFile {
     pub fn reader(&self) -> FileReader {
         FileReader::new(self, &self.arc.bytes, FilePos::HEAD)
     }
+
+    pub fn head(&self) -> FileLocRef {
+        FileLocRef {
+            file: self,
+            pos: FilePos::HEAD,
+        }
+    }
 }
 
 impl Hash for SourceFile {
@@ -67,8 +74,8 @@ pub struct AnySpan<F> {
     end: FilePos,
 }
 
-impl Span {
-    pub fn new<F1, F2>(a: &AnyFileLoc<F1>, b: &AnyFileLoc<F2>) -> Self
+impl<'a> SpanRef<'a> {
+    pub fn new_ref<F1, F2>(a: &'a AnyFileLoc<F1>, b: &AnyFileLoc<F2>) -> Self
     where
         F1: Borrow<SourceFile>,
         F2: Borrow<SourceFile>,
@@ -79,15 +86,24 @@ impl Span {
             "Cannot construct a Span spanning two different files!"
         );
 
-        let file = a.file().clone();
         let mut locs = [a.pos, b.pos];
         locs.sort();
 
         Self {
-            file,
+            file: a.file(),
             start: locs[0],
             end: locs[1],
         }
+    }
+}
+
+impl Span {
+    pub fn new_owned<F1, F2>(a: &AnyFileLoc<F1>, b: &AnyFileLoc<F2>) -> Self
+    where
+        F1: Borrow<SourceFile>,
+        F2: Borrow<SourceFile>,
+    {
+        SpanRef::new_ref(a, b).as_owned()
     }
 }
 
@@ -123,6 +139,22 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         FileLocRef {
             file: self.file(),
             pos: self.end,
+        }
+    }
+
+    pub fn as_ref(&self) -> SpanRef {
+        SpanRef {
+            file: self.file(),
+            start: self.start,
+            end: self.end,
+        }
+    }
+
+    pub fn as_owned(&self) -> Span {
+        Span {
+            file: self.file().clone(),
+            start: self.start,
+            end: self.end,
         }
     }
 }
@@ -299,6 +331,20 @@ impl<'a> FileReader<'a> {
         }
     }
 
+    // TODO: We might want to devise a more interactive lookahead mechanism.
+    pub fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
+    where
+        F: FnOnce(&mut FileReader) -> R,
+        R: LookaheadResult,
+    {
+        let mut lookahead = self.clone();
+        let res = handler(&mut lookahead);
+        if res.is_truthy() {
+            *self = lookahead;
+        }
+        res.into_result()
+    }
+
     pub fn peek(&self) -> ReadAtom {
         self.clone().consume_untracked()
     }
@@ -310,6 +356,7 @@ impl<'a> FileReader<'a> {
             ReadAtom::Codepoint(_) => self.col += 1,
             // These will probably show up as illegal character boxes in the editor.
             ReadAtom::Unknown(_) => self.col += 1,
+            // Newlines, valid or not, are typically treated as newlines by editors.
             ReadAtom::Newline { .. } => {
                 self.line += 1;
                 self.col = 0;
@@ -332,32 +379,104 @@ impl<'a> FileReader<'a> {
     }
 }
 
+pub trait LookaheadResult {
+    type Ret: Sized;
+
+    fn is_truthy(&self) -> bool;
+    fn into_result(self) -> Self::Ret;
+}
+
+impl LookaheadResult for bool {
+    type Ret = Self;
+
+    fn is_truthy(&self) -> bool {
+        *self
+    }
+
+    fn into_result(self) -> Self::Ret {
+        self
+    }
+}
+
+impl<T> LookaheadResult for Option<T> {
+    type Ret = Self;
+
+    fn is_truthy(&self) -> bool {
+        self.is_some()
+    }
+
+    fn into_result(self) -> Self::Ret {
+        self
+    }
+}
+
+impl<T> LookaheadResult for (bool, T) {
+    type Ret = T;
+
+    fn is_truthy(&self) -> bool {
+        self.0
+    }
+
+    fn into_result(self) -> Self::Ret {
+        self.1
+    }
+}
+
+/// An abstraction over unicode that represents an indivisible unit of text. Characters are
+/// categorized by how they are typically handled by code editors.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum ReadAtom {
+    /// Codepoints best correspond with the editor's notion of a character, even though some rich
+    /// text renderers might disagree.
     Codepoint(char),
+
+    /// These are invalid codepoints, which are probably rendered as their own character anyways.
     Unknown(u32),
+
+    /// Anything that most editors will typically treat as newlines. These may or may not be
+    /// properly formed. These will all be transformed into a "safer" `\n` representation before
+    /// being displayed.
     Newline { valid: bool },
+
+    /// The end of a file.
     Eof,
 }
 
 impl ReadAtom {
-    pub fn is_newline(&self) -> bool {
+    pub const UNRECOGNIZED_CHAR: char = '�';
+
+    /// Returns whether this atom is well formed.
+    pub fn is_well_formed(self) -> bool {
+        match self {
+            // Valid atoms
+            Self::Codepoint(_) => true,
+            Self::Newline { valid: true } => true,
+            Self::Eof => true,
+            // Invalid atoms
+            Self::Unknown(_) => false,
+            Self::Newline { valid: false } => false,
+        }
+    }
+
+    /// Returns whether this atom is treated as a newline by most code editors.
+    pub fn is_newline(self) -> bool {
         match self {
             ReadAtom::Newline { .. } => true,
             _ => false,
         }
     }
 
-    pub fn as_char(&self) -> Option<CharOrEof> {
-        match *self {
+    /// Converts the atom into a codepoint character for use in rendering or matching.
+    /// All malformed atoms are converted into safe-to-display equivalents.
+    pub fn as_char(self) -> CharOrEof {
+        match self {
             // Valid patterns
-            ReadAtom::Codepoint(char) => Some(CharOrEof::Char(char)),
-            ReadAtom::Newline { valid: true } => Some(CharOrEof::Char('\n')),
-            ReadAtom::Eof => Some(CharOrEof::Eof),
+            Self::Codepoint(char) => CharOrEof::Char(char),
+            Self::Newline { .. } => CharOrEof::Char('\n'),
+            Self::Eof => CharOrEof::Eof,
 
             // Invalid patterns
-            ReadAtom::Unknown(_) => None,
-            ReadAtom::Newline { valid: false } => None,
+            Self::Unknown(_) => CharOrEof::Char(Self::UNRECOGNIZED_CHAR),
         }
     }
 }
@@ -366,4 +485,19 @@ impl ReadAtom {
 pub enum CharOrEof {
     Char(char),
     Eof,
+}
+
+impl CharOrEof {
+    pub fn to_char(self) -> char {
+        match self {
+            Self::Char(char) => char,
+            Self::Eof => '\0',
+        }
+    }
+}
+
+impl From<char> for CharOrEof {
+    fn from(char: char) -> Self {
+        CharOrEof::Char(char)
+    }
 }
