@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
 
@@ -17,24 +17,20 @@ pub struct SourceFile {
 }
 
 struct SourceFileInner {
-    path: Box<Path>,
+    path: PathBuf,
     bytes: Vec<u8>,
 }
 
 impl SourceFile {
-    pub fn from_file(path: Box<Path>) -> io::Result<Self> {
+    pub fn from_file(path: PathBuf) -> io::Result<Self> {
         let bytes = fs::read(&path)?;
         Ok(Self::from_bytes(path, bytes))
     }
 
-    pub fn from_bytes(path: Box<Path>, bytes: Vec<u8>) -> Self {
+    pub fn from_bytes(path: PathBuf, bytes: Vec<u8>) -> Self {
         Self {
             arc: Arc::new(SourceFileInner { path, bytes }),
         }
-    }
-
-    pub fn reader(&self) -> FileReader {
-        FileReader::new(self, &self.arc.bytes, FilePos::HEAD)
     }
 
     pub fn head(&self) -> FileLocRef {
@@ -42,6 +38,12 @@ impl SourceFile {
             file: self,
             pos: FilePos::HEAD,
         }
+    }
+}
+
+impl AsFileReader for SourceFile {
+    fn reader(&self) -> FileReader {
+        FileReader::new(self, &self.arc.bytes, FilePos::HEAD)
     }
 }
 
@@ -67,7 +69,7 @@ impl Debug for SourceFile {
 pub type Span = AnySpan<SourceFile>;
 pub type SpanRef<'a> = AnySpan<&'a SourceFile>;
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct AnySpan<F> {
     file: F,
     start: FilePos,
@@ -108,12 +110,13 @@ impl Span {
 }
 
 impl<F: Borrow<SourceFile>> AnySpan<F> {
+    // TODO: Make this return the proper lifetime for "SpanRefs"
     pub fn file(&self) -> &SourceFile {
         self.file.borrow()
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.file().arc.bytes
+        &self.file().arc.bytes[self.start.index..=self.end.index]
     }
 
     pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
@@ -122,10 +125,6 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
 
     pub fn as_str(&self) -> &str {
         self.try_as_str().unwrap()
-    }
-
-    pub fn reader(&self) -> FileReader {
-        FileReader::new(self.file(), self.bytes(), self.start)
     }
 
     pub fn start(&self) -> FileLocRef {
@@ -159,10 +158,16 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
     }
 }
 
+impl<F: Borrow<SourceFile>> AsFileReader for AnySpan<F> {
+    fn reader(&self) -> FileReader {
+        FileReader::new(self.file(), self.bytes(), self.start)
+    }
+}
+
 pub type FileLoc = AnyFileLoc<SourceFile>;
 pub type FileLocRef<'a> = AnyFileLoc<&'a SourceFile>;
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Copy, Clone, Hash)]
 pub struct AnyFileLoc<F> {
     file: F,
     pos: FilePos,
@@ -246,49 +251,8 @@ impl PartialOrd for FilePos {
 
 // === Reader === //
 
-#[derive(Clone)]
-struct CharReader<'a> {
-    source: &'a [u8],
-    index: usize,
-}
-
-impl<'a> CharReader<'a> {
-    pub fn new(source: &'a [u8], index: usize) -> Self {
-        Self { source, index }
-    }
-
-    pub fn peek(&self) -> Result<Option<char>, CharReadErr> {
-        self.clone().consume()
-    }
-
-    pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
-        let mut stream = self.source.iter();
-
-        // Consume char
-        let start = stream.len();
-        let code = next_code_point(&mut stream);
-
-        // Decode char
-        let char = match code {
-            Some(code) => Some(char::from_u32(code).ok_or(CharReadErr::BadUnicode(code))?),
-            None => None,
-        };
-
-        // Update stream
-        self.source = stream.as_slice();
-        self.index += start - stream.len();
-
-        Ok(char)
-    }
-
-    pub fn index(&self) -> usize {
-        self.index
-    }
-}
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-enum CharReadErr {
-    BadUnicode(u32),
+pub trait AsFileReader {
+    fn reader(&self) -> FileReader;
 }
 
 #[derive(Clone)]
@@ -334,7 +298,7 @@ impl<'a> FileReader<'a> {
     // TODO: We might want to devise a more interactive lookahead mechanism.
     pub fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
     where
-        F: FnOnce(&mut FileReader) -> R,
+        F: FnOnce(&mut FileReader<'a>) -> R,
         R: LookaheadResult,
     {
         let mut lookahead = self.clone();
@@ -422,6 +386,51 @@ impl<T> LookaheadResult for (bool, T) {
     }
 }
 
+#[derive(Clone)]
+struct CharReader<'a> {
+    source: &'a [u8],
+    index: usize,
+}
+
+impl<'a> CharReader<'a> {
+    pub fn new(source: &'a [u8], index: usize) -> Self {
+        Self { source, index }
+    }
+
+    pub fn peek(&self) -> Result<Option<char>, CharReadErr> {
+        self.clone().consume()
+    }
+
+    pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
+        let mut stream = self.source.iter();
+
+        // Consume char
+        let start = stream.len();
+        let code = next_code_point(&mut stream);
+
+        // Decode char
+        let char = match code {
+            Some(code) => Some(char::from_u32(code).ok_or(CharReadErr::BadUnicode(code))?),
+            None => None,
+        };
+
+        // Update stream
+        self.source = stream.as_slice();
+        self.index += start - stream.len();
+
+        Ok(char)
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+enum CharReadErr {
+    BadUnicode(u32),
+}
+
 /// An abstraction over unicode that represents an indivisible unit of text. Characters are
 /// categorized by how they are typically handled by code editors.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -466,9 +475,23 @@ impl ReadAtom {
         }
     }
 
+    pub fn is_eof(&self) -> bool {
+        return *self == ReadAtom::Eof;
+    }
+
     /// Converts the atom into a codepoint character for use in rendering or matching.
     /// All malformed atoms are converted into safe-to-display equivalents.
-    pub fn as_char(self) -> CharOrEof {
+    ///
+    /// The EOF is transformed into the nul character (`\0`).
+    pub fn as_char(self) -> char {
+        self.as_char_or_eof().nul_eof()
+    }
+
+    /// Converts the atom into a codepoint character for use in rendering or matching.
+    /// All malformed atoms are converted into safe-to-display equivalents.
+    ///
+    /// The EOF is held in a distinct enum variant to all other characters.
+    pub fn as_char_or_eof(self) -> CharOrEof {
         match self {
             // Valid patterns
             Self::Codepoint(char) => CharOrEof::Char(char),
@@ -488,7 +511,7 @@ pub enum CharOrEof {
 }
 
 impl CharOrEof {
-    pub fn to_char(self) -> char {
+    pub fn nul_eof(self) -> char {
         match self {
             Self::Char(char) => char,
             Self::Eof => '\0',

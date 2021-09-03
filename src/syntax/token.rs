@@ -17,7 +17,7 @@
 
 // === Intermediate representation === //
 
-use crate::syntax::span::{CharOrEof, FileReader, ReadAtom, SourceFile, Span, SpanRef};
+use crate::syntax::span::{AsFileReader, CharOrEof, FileLoc, FileReader, ReadAtom, Span, SpanRef};
 use crate::util::enum_meta::{enum_meta, EnumMeta};
 use std::sync::Arc;
 
@@ -29,6 +29,7 @@ pub trait AnyToken {
 pub enum Token {
     Group(TokenGroup),
     Ident(TokenIdent),
+    Punct(TokenPunct),
 }
 
 impl Token {
@@ -36,6 +37,7 @@ impl Token {
         match self {
             Token::Group(group) => group as _,
             Token::Ident(ident) => ident as _,
+            Token::Punct(punct) => punct as _,
         }
     }
 }
@@ -93,7 +95,7 @@ impl Into<Token> for TokenGroup {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenIdent {
     span: Span,
     text: String,
@@ -108,6 +110,24 @@ impl Into<Token> for TokenIdent {
 impl AnyToken for TokenIdent {
     fn full_span(&self) -> SpanRef {
         self.span.as_ref()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenPunct {
+    loc: FileLoc,
+    punct: PunctChar,
+}
+
+impl Into<Token> for TokenPunct {
+    fn into(self) -> Token {
+        Token::Punct(self)
+    }
+}
+
+impl AnyToken for TokenPunct {
+    fn full_span(&self) -> SpanRef {
+        SpanRef::new_ref(&self.loc, &self.loc)
     }
 }
 
@@ -142,6 +162,30 @@ enum_meta! {
             right: CharOrEof::Char('>'),
         },
     }
+
+    #[derive(Debug)]
+    pub enum(char) PunctChar {
+        Backtick = '`',
+        Tilde = '~',
+        Exclamation = '!',
+        At = '@',
+        Pound = '#',
+        Dollar = '$',
+        Percent = '%',
+        Caret = '^',
+        Ampersand = '&',
+        Asterisk = '*',
+        Dash = '-',
+        Plus = '+',
+        Equals = '=',
+        Bar = '|',
+        Semicolon = ';',
+        Colon = ':',
+        Comma = ',',
+        Period = '.',
+        Question = '?',
+        Slash = '/',
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -159,14 +203,16 @@ enum DelimiterMode {
     Close,
 }
 
+#[derive(Debug)]
 enum FlatToken {
     Delimiter(DelimiterMode, GroupDelimiter),
     Ident(TokenIdent),
+    Punct(TokenPunct),
 }
 
 // TODO: Error reporting mechanisms
 
-pub fn tokenize_span(source: &SourceFile) -> TokenGroup {
+pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
     let mut reader = source.reader();
 
     // Consume shebang
@@ -175,64 +221,86 @@ pub fn tokenize_span(source: &SourceFile) -> TokenGroup {
     // Parse flat token stream
     let mut tokens = Vec::new();
     loop {
+        // End on EOF
+        if reader.peek().is_eof() {
+            break;
+        }
+
         // Parse whitespace
         if consume_whitespace(&mut reader) {
             continue;
         }
 
-        // Parse group delimiters
+        // Parse group delimiters (open and close)
         if let Some((mode, delimiter)) = consume_delimiter(&mut reader) {
             tokens.push(FlatToken::Delimiter(mode, delimiter));
             continue;
         }
 
         // Parse identifiers
+        if let Some(ident) = consume_ident(&mut reader) {
+            tokens.push(FlatToken::Ident(TokenIdent {
+                span: ident.as_owned(),
+                text: ident.as_str().to_string(),
+            }));
+            continue;
+        }
+
+        // Parse punctuation
+        if let Some(punct) = consume_punct(&mut reader) {
+            tokens.push(FlatToken::Punct(TokenPunct {
+                loc: reader.loc().as_owned(),
+                punct,
+            }));
+            continue;
+        }
+
+        // Parse literals
         // TODO
+
+        // Parse comments
+        // TODO
+
+        // Handle unexpected character
+        let unexpected = reader.consume();
+        eprintln!("Unexpected: {}", unexpected.as_char_or_eof().nul_eof());
     }
+
+    println!("Tokens: {:#?}", tokens);
 
     // Transform flat token stream into grouped stream
-    // TODO
+    todo!()
 }
+
+// === Tokenize components === //
 
 fn consume_shebang(reader: &mut FileReader) {
-    let mut lookahead = reader.clone();
-
-    // Magic "number"
-    if lookahead.consume() != ReadAtom::Codepoint('#') {
-        return;
-    }
-
-    if lookahead.consume() != ReadAtom::Codepoint('!') {
-        return;
-    }
-
-    // Read until line end
-    loop {
-        let spacing = lookahead.consume();
-        // We don't warn on illegal characters since we're not the one parsing this section.
-        if spacing.is_newline() || spacing == ReadAtom::Eof {
-            break;
-        }
-    }
-
-    // Commit
-    *reader = lookahead;
-}
-
-fn consume_seq(reader: &mut FileReader, seq: &[CharOrEof]) -> bool {
     reader.lookahead(|reader| {
-        for pattern_char in seq {
-            if reader.consume().as_char() != *pattern_char {
-                return false;
+        // Magic "number"
+        if reader.consume() != ReadAtom::Codepoint('#') {
+            return false;
+        }
+
+        if reader.consume() != ReadAtom::Codepoint('!') {
+            return false;
+        }
+
+        // Read until line end
+        loop {
+            let spacing = reader.consume();
+            // We don't warn on illegal characters since we're not the one parsing this section.
+            if spacing.is_newline() || spacing == ReadAtom::Eof {
+                break;
             }
         }
+
         true
-    })
+    });
 }
 
 fn consume_delimiter(reader: &mut FileReader) -> Option<(DelimiterMode, GroupDelimiter)> {
     reader.lookahead(|reader| {
-        let char = reader.consume().as_char();
+        let char = reader.consume().as_char_or_eof();
         for (delimiter, meta) in GroupDelimiter::values() {
             if meta.left == Some(char) {
                 return Some((DelimiterMode::Open, *delimiter));
@@ -246,9 +314,68 @@ fn consume_delimiter(reader: &mut FileReader) -> Option<(DelimiterMode, GroupDel
     })
 }
 
-fn consume_whitespace(reader: &mut FileReader) -> bool {
+fn consume_punct(reader: &mut FileReader) -> Option<PunctChar> {
     reader.lookahead(|reader| {
-        let atom = reader.consume();
-        atom.is_newline() || atom.as_char().to_char().is_whitespace()
+        let char = reader.consume().as_char_or_eof().nul_eof();
+        for (punct, match_char) in PunctChar::values().iter().copied() {
+            if char == match_char {
+                return Some(punct);
+            }
+        }
+        None
+    })
+}
+
+fn consume_whitespace(reader: &mut FileReader) -> bool {
+    reader.lookahead(|reader| is_whitespace(reader.consume()))
+}
+
+fn consume_ident(reader: &mut FileReader) -> Option<Span> {
+    fn is_ident_start(atom: ReadAtom) -> bool {
+        match atom {
+            ReadAtom::Codepoint(char) => char.is_alphabetic() || char == '_',
+            _ => false,
+        }
+    }
+
+    fn is_ident_subsequent(atom: ReadAtom) -> bool {
+        match atom {
+            ReadAtom::Codepoint(char) => char.is_alphanumeric() || char == '_',
+            _ => false,
+        }
+    }
+
+    reader.lookahead(|reader| {
+        let start = reader.loc();
+
+        // Consume first ident char
+        if !is_ident_start(reader.consume()) {
+            return None;
+        }
+
+        // Read until first non-ident char
+        let mut end = start;
+        while is_ident_subsequent(reader.peek()) {
+            end = reader.loc();
+            reader.consume();
+        }
+
+        // Construct ident span
+        Some(Span::new_owned(&start, &end))
+    })
+}
+
+fn is_whitespace(atom: ReadAtom) -> bool {
+    atom.as_char_or_eof().nul_eof().is_whitespace()
+}
+
+fn consume_str_seq(reader: &mut FileReader, seq: &[CharOrEof]) -> bool {
+    reader.lookahead(|reader| {
+        for pattern_char in seq {
+            if reader.consume().as_char_or_eof() != *pattern_char {
+                return false;
+            }
+        }
+        true
     })
 }

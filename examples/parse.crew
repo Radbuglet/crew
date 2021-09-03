@@ -1,0 +1,16 @@
+static MY_ARRAY: Vec<str> = vec![ "My string 1", "My string 2" ];
+
+#[some_meta]
+pub class MyClass {
+	#[some_meta]
+	val immutable_field: u32;
+	dyn out(...)
+		var mutable_field: u32;
+
+	pub static fn test<T>(foo: Foo<...>, bar: T) -> T
+	where
+		T: IMyInterface
+	{
+		...
+	}
+}
