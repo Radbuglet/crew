@@ -77,10 +77,10 @@ pub struct AnySpan<F> {
 }
 
 impl<'a> SpanRef<'a> {
-    pub fn new_ref<F1, F2>(a: &'a AnyFileLoc<F1>, b: &AnyFileLoc<F2>) -> Self
+    pub fn new<FA, FB>(a: &'a AnyFileLoc<FA>, b: &AnyFileLoc<FB>) -> Self
     where
-        F1: Borrow<SourceFile>,
-        F2: Borrow<SourceFile>,
+        FA: Borrow<SourceFile>,
+        FB: Borrow<SourceFile>,
     {
         assert_eq!(
             a.file(),
@@ -99,18 +99,7 @@ impl<'a> SpanRef<'a> {
     }
 }
 
-impl Span {
-    pub fn new_owned<F1, F2>(a: &AnyFileLoc<F1>, b: &AnyFileLoc<F2>) -> Self
-    where
-        F1: Borrow<SourceFile>,
-        F2: Borrow<SourceFile>,
-    {
-        SpanRef::new_ref(a, b).as_owned()
-    }
-}
-
 impl<F: Borrow<SourceFile>> AnySpan<F> {
-    // TODO: Make this return the proper lifetime for "SpanRefs"
     pub fn file(&self) -> &SourceFile {
         self.file.borrow()
     }
@@ -295,7 +284,6 @@ impl<'a> FileReader<'a> {
         }
     }
 
-    // TODO: We might want to devise a more interactive lookahead mechanism.
     pub fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
     where
         F: FnOnce(&mut FileReader<'a>) -> R,
@@ -468,7 +456,7 @@ impl ReadAtom {
     }
 
     /// Returns whether this atom is treated as a newline by most code editors.
-    pub fn is_newline(self) -> bool {
+    pub fn is_newline_like(self) -> bool {
         match self {
             ReadAtom::Newline { .. } => true,
             _ => false,

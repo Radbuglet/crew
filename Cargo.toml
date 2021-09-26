@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
+hashbrown = { version = "0.11.2", features = ["raw"] }
+smallvec = "1.6.1"
