@@ -1,0 +1,21 @@
+use some_module::*;
+
+pub class IMyInterface {
+	pub in type TypeAlias: IMyOtherInterface<Parent = Self>;
+}
+
+pub class IMyOtherInterface {
+	pub in type Parent;
+
+	pub in fn produce() -> Self::Parent;
+}
+
+fn test<A: IMyInterface>(a: u32, b: u32, c: A::TypeAlias) -> A {
+	val my_var = a + b;
+
+	match my_var {
+		0..5 => do_something(),
+		_ => do_something_else(some_named_arg: true),
+	}
+	c.produce()
+}

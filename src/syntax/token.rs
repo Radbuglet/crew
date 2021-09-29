@@ -11,7 +11,6 @@
 //! - Early interning of identifiers and literals
 //! - Unbalanced group recovery
 //! - Invalid character recovery
-//! - "homonymous character" warnings
 //! - Shebang ignoring
 //!
 
@@ -29,7 +28,7 @@ pub trait AnyToken {
     fn full_span(&self) -> SpanRef;
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)] // TODO: Better debug printing
 pub enum Token {
     Group(TokenGroup),
     Ident(TokenIdent),
@@ -50,7 +49,7 @@ impl Token {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenGroup {
     span: Span,
     delimiter: GroupDelimiter,
@@ -111,7 +110,7 @@ impl Into<Token> for TokenGroup {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenIdent {
     span: Span,
     text: Intern,
@@ -129,7 +128,7 @@ impl Into<Token> for TokenIdent {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenPunct {
     loc: FileLoc,
     punct: PunctChar,
@@ -147,7 +146,7 @@ impl Into<Token> for TokenPunct {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenStringLit {
     span: Span,
     mode: StringMode,
@@ -166,26 +165,18 @@ impl Into<Token> for TokenStringLit {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum StringMode {
-    Normal,
-    Ascii,
-    Templated,
-}
-
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum StringComponent {
     Template(TokenGroup),
     Literal(Intern),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenNumberLit {
     span: Span,
     prefix: NumberPrefix,
     int: Intern,
     fp: Option<(Intern, Option<Intern>)>,
-    suffix: Option<NumberSuffix>,
 }
 
 impl AnyToken for TokenNumberLit {
@@ -199,8 +190,6 @@ impl Into<Token> for TokenNumberLit {
         Token::NumberLit(self)
     }
 }
-
-// === Char groups (IR) === //
 
 enum_meta! {
     #[derive(Debug)]
@@ -259,35 +248,29 @@ enum_meta! {
     #[derive(Debug)]
     pub enum(NumberPrefixMeta) NumberPrefix {
         Decimal = NumberPrefixMeta {
-            prefix_char: None,
-            int_digits: "0123456789",
+            prefix: None,
+            digits: "0123456789",
         },
         Octal = NumberPrefixMeta {
-            prefix_char: Some('o'),
-            int_digits: "01234567",
+            prefix: Some('o'),
+            digits: "01234567",
         },
         Hexadecimal = NumberPrefixMeta {
-            prefix_char: Some('x'),
-            int_digits: "0123456789abcdef",
+            prefix: Some('x'),
+            digits: "0123456789abcdef",
         },
         Binary = NumberPrefixMeta {
-            prefix_char: Some('b'),
-            int_digits: "01",
+            prefix: Some('b'),
+            digits: "01",
         },
     }
 
     #[derive(Debug)]
-    pub enum(&'static str) NumberSuffix {
-        U8 = "u8",
-        U16 = "u16",
-        U32 = "u32",
-        U64 = "u64",
-        I8 = "u8",
-        I16 = "u16",
-        I32 = "u32",
-        I64 = "u64",
-        F32 = "f32",
-        F64 = "f64",
+    pub enum(Option<char>) StringMode {
+        Normal = None,
+        Ascii = Some('a'),
+        Raw = Some('r'),
+        Templated = Some('$'),
     }
 }
 
@@ -300,11 +283,11 @@ pub struct GroupDelimiterMeta {
 
 #[derive(Debug, Copy, Clone)]
 pub struct NumberPrefixMeta {
-    prefix_char: Option<char>,
-    int_digits: &'static str,
+    prefix: Option<char>,
+    digits: &'static str,
 }
 
-// === Misc IR === //
+// === Working IR === //
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum DelimiterMode {
@@ -316,6 +299,7 @@ pub enum DelimiterMode {
 enum StackFrame {
     Group(TokenGroup),
     String(TokenStringLit),
+    Comment,
 }
 
 impl Into<StackFrame> for TokenGroup {
@@ -335,11 +319,110 @@ impl Into<StackFrame> for TokenStringLit {
 // TODO: Error reporting mechanisms
 
 pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: &R) -> TokenGroup {
-    todo!()
+    let mut reader = source.reader();
+
+    // Consume any shebang at the beginning of the file.
+    let _ = match_shebang(&mut reader);
+
+    // Start tokenizing
+    let mut stack = vec![StackFrame::Group(TokenGroup::new(
+        reader.next_loc().as_span().as_owned(),
+        GroupDelimiter::File,
+    ))];
+
+    loop {
+        match stack.last_mut().unwrap() {
+            StackFrame::Group(group) => {
+                // Match group delimiters
+                match group_match_delimiter(&mut reader) {
+                    // Group open
+                    Some((delimiter, DelimiterMode::Open)) => {
+                        stack.push(StackFrame::Group(TokenGroup::new(
+                            reader.next_loc().as_span().as_owned(),
+                            delimiter,
+                        )));
+                        continue;
+                    }
+                    // Group close
+                    Some((delimiter, DelimiterMode::Close)) => {
+                        // Pop until we find a corresponding group or exits if we close the top-most
+                        // delimiter, warning on mismatched delimiters. Because the EOF is a group
+                        // delimiter, this code also handles unbalanced groups.
+                        loop {
+                            if let Some(StackFrame::Group(mut child)) = stack.pop() {
+                                child.span.set_end(&reader.prev_loc());
+                                match stack.last_mut() {
+                                    Some(StackFrame::Group(parent)) => {
+                                        parent.tokens_mut().push(Token::Group(child));
+
+                                        // TODO: Diagnostic
+                                        if parent.delimiter == delimiter {
+                                            break;
+                                        }
+                                    }
+                                    Some(StackFrame::String(_)) => todo!(),
+                                    Some(StackFrame::Comment) => unreachable!(
+                                        "Tokenizer was parsing groups within a comment. What?"
+                                    ),
+                                    None => return child,
+                                }
+                            } else {
+                                unreachable!();
+                            }
+                        }
+
+                        continue;
+                    }
+                    None => {}
+                }
+
+                // Match string literal start
+                if let Some(token) = group_match_string_start(&mut reader) {
+                    stack.push(StackFrame::String(token));
+                    continue;
+                }
+
+                // Match comment start
+                // We match comments before punctuation because line comments can be parsed as two
+                // '/' puncts back to back and block comments can be parsed as a '/' punct followed
+                // by an '*'.
+                // TODO
+
+                // Match whitespace
+                if group_match_whitespace(&mut reader, false) {
+                    // EOF should be unreachable here.
+                    continue;
+                }
+
+                // Match identifier
+                if let Some(ident) = group_match_ident(&mut reader, interner) {
+                    group.tokens_mut().push(Token::Ident(ident));
+                    continue;
+                }
+
+                // Match punctuation
+                if let Some(punct) = group_match_punct(&mut reader) {
+                    group.tokens_mut().push(Token::Punct(punct));
+                    continue;
+                }
+
+                // Match number literal
+                // TODO
+
+                eprintln!(
+                    // TODO
+                    "Unexpected character \"{:?}\" at {}!",
+                    reader.clone().consume(),
+                    reader.next_loc(),
+                );
+            }
+            StackFrame::String(_) => todo!(),
+            StackFrame::Comment => todo!(),
+        }
+    }
 }
 
-/// Returns `true` if it was able to consume a UNIX shebang, leaving the cursor one character past
-/// the newline or at the EOF. This may match the EOF.
+/// Returns `true` if it was able to consume a UNIX shebang. This may match the EOF.
 pub fn match_shebang(reader: &mut FileReader) -> bool {
     reader.lookahead(|reader| {
         // Magic "number"
@@ -366,7 +449,8 @@ pub fn match_shebang(reader: &mut FileReader) -> bool {
     })
 }
 
-/// Matches and consumes a single group delimiter or `None` otherwise. This may match the EOF.
+/// Matches and consumes a single group delimiter or `None` otherwise. The EOF is matched as a
+/// closing [GroupDelimiter::File] delimiter.
 pub fn group_match_delimiter(reader: &mut FileReader) -> Option<(GroupDelimiter, DelimiterMode)> {
     reader.lookahead(|reader| {
         let read = reader.consume().as_char_or_eof();
@@ -383,7 +467,7 @@ pub fn group_match_delimiter(reader: &mut FileReader) -> Option<(GroupDelimiter,
 }
 
 /// Matches and consumes a [TokenIdent] that is at least one character long. Does not match the EOF.
-pub fn group_match_ident(interner: &mut Interner, reader: &mut FileReader) -> Option<TokenIdent> {
+pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Option<TokenIdent> {
     fn match_ident_start(atom: ReadAtom) -> bool {
         let char = atom.as_char();
         char.is_alphabetic() || char == '_'
@@ -396,25 +480,31 @@ pub fn group_match_ident(interner: &mut Interner, reader: &mut FileReader) -> Op
 
     reader.lookahead(|reader| {
         let mut intern = interner.begin_intern();
-        let start = reader.loc();
-        let mut end = reader.loc();
+        let start = reader.next_loc();
 
         // Read identifier start
-        if !match_ident_start(reader.peek()) {
-            return None;
+        {
+            let start = reader.consume();
+            if !match_ident_start(start) {
+                return None;
+            }
+            intern.push(start.as_char());
         }
-        intern.push(reader.consume().as_char());
 
         // Read identifier subsequent
-        while match_ident_subsequent(reader.peek()) {
-            end = reader.loc();
-            intern.push(reader.peek().as_char());
-            reader.consume();
-        }
+        while reader.lookahead(|reader| {
+            let subsequent = reader.consume();
+            if match_ident_subsequent(subsequent) {
+                intern.push(subsequent.as_char());
+                true
+            } else {
+                false
+            }
+        }) {}
 
         // Build identifier
         Some(TokenIdent {
-            span: SpanRef::new(&start, &end).as_owned(),
+            span: Span::new(&start, &reader.prev_loc()),
             text: intern.build(),
         })
     })
@@ -423,7 +513,7 @@ pub fn group_match_ident(interner: &mut Interner, reader: &mut FileReader) -> Op
 /// Matches and consumes a single [TokenPunct]. Does not match the EOF.
 pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
     reader.lookahead(|reader| {
-        let loc = reader.loc();
+        let loc = reader.next_loc();
         let read = match reader.consume() {
             ReadAtom::Codepoint(char) => char,
             _ => return None,
@@ -442,14 +532,14 @@ pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
     })
 }
 
-/// Returns `true` if it was able to match and consume a single whitespace character. Does not match
-/// the EOF.
-pub fn group_match_whitespace(reader: &mut FileReader) -> bool {
+/// Returns `true` if it was able to match and consume a single whitespace character. Matches the EOF
+/// is the `match_eof` flag is enabled.
+pub fn group_match_whitespace(reader: &mut FileReader, match_eof: bool) -> bool {
     reader.lookahead(|reader| match reader.consume() {
         ReadAtom::Codepoint(char) => char.is_whitespace(),
         ReadAtom::Newline { .. } => true,
         ReadAtom::Unknown(_) => false,
-        ReadAtom::Eof => false,
+        ReadAtom::Eof => match_eof,
     })
 }
 
@@ -458,42 +548,38 @@ pub fn group_match_whitespace(reader: &mut FileReader) -> bool {
 /// ## Syntax
 ///
 /// ```text
-/// [prefix?: a|$] [quote: "]
+/// [prefix?: a|$] [quote: '"']
 /// ```
 ///
 /// See [StringMode] for more information about the prefixes.
 ///
 pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLit> {
     reader.lookahead(|reader| {
-        let start = reader.loc();
-        let mut end = reader.loc();
+        let start = reader.next_loc();
 
         // Read string start and determine mode
-        let mode = match reader.consume() {
-            // TODO: Binary string mode, use prefix consuming system.
-            ReadAtom::Codepoint('"') => StringMode::Normal,
-            ReadAtom::Codepoint('a') => {
-                end = reader.loc();
-                if let ReadAtom::Codepoint('"') = reader.consume() {
-                    StringMode::Ascii
-                } else {
+        let mode = StringMode::values_iter().find_map(|(mode, prefix)| {
+            // Attempt to match mode's start delimiter
+            reader.lookahead(move |reader| {
+                // Match prefix, if required
+                if let Some(prefix) = prefix {
+                    if reader.consume().as_char() != *prefix {
+                        return None;
+                    }
+                }
+
+                // Match quote
+                if reader.consume() != ReadAtom::Codepoint('"') {
                     return None;
                 }
-            }
-            ReadAtom::Codepoint('$') => {
-                end = reader.loc();
-                if let ReadAtom::Codepoint('"') = reader.consume() {
-                    StringMode::Templated
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
-        };
+
+                Some(mode)
+            })
+        });
 
         // Build literal
-        Some(TokenStringLit {
-            span: SpanRef::new(&start, &end).as_owned(),
+        mode.map(|mode| TokenStringLit {
+            span: Span::new(&start, &reader.next_loc()),
             mode,
             parts: SmallVec::new(),
         })
@@ -511,78 +597,16 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
 ///     "." + DEC_DIGIT*
 ///     [exponent?: "E" + (+|-) + DEC_DIGIT*]
 /// ]
-/// [type?: TYPE_SUFFIXES]
 /// ```
+///
+/// **Note:** we explicitly do not parse the leading sign because we handle negative numbers during
+/// constant arithmetic resolution.
 ///
 /// See [NumberPrefix] for more information about prefixes.
 ///
-/// See [NumberSuffix] for more information about type suffixes.
-///
 pub fn group_match_number_lit(
-    reader: &mut FileReader,
-    interner: &mut Interner,
+    _reader: &mut FileReader,
+    _interner: &mut Interner,
 ) -> Option<TokenNumberLit> {
-    reader.lookahead(|reader| {
-        let start = reader.loc();
-        let mut end = reader.loc();
-
-        // Attempt to match prefix
-        let prefix = reader
-            .lookahead(|reader| {
-                // Consume '0'
-                if reader.consume().as_char() != '0' {
-                    return None;
-                }
-
-                // Consume prefix character
-                let read = reader.consume().as_char().to_ascii_lowercase();
-                NumberPrefix::values_iter().find_map(move |(prefix, meta)| {
-                    if Some(read) == meta.prefix_char {
-                        Some(prefix)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or(NumberPrefix::Decimal);
-
-        // Read integer-part digits
-        let mut int_part = interner.begin_intern();
-        let is_valid_char = move |char: char| {
-            let char = char.to_ascii_lowercase();
-            prefix
-                .meta()
-                .int_digits
-                .chars()
-                .any(|allowed| allowed == char)
-        };
-
-        loop {
-            let matched = reader.lookahead(|reader| match reader.consume() {
-                ReadAtom::Codepoint(char) if is_valid_char(char) => {
-                    Some(Some(char.to_ascii_lowercase()))
-                }
-                ReadAtom::Codepoint('_') => Some(None),
-                ReadAtom::Newline { .. } => None,
-                ReadAtom::Eof => None,
-                _ => todo!(),
-            });
-
-            if let Some(char) = matched {
-                if let Some(char) = char {
-                    int_part.push(char);
-                }
-                end = reader.loc();
-            } else {
-                break;
-            }
-        }
-        let int_part = int_part.build();
-
-        // TODO: Finish
-
-        println!("Parsed: {:?} {}", prefix, interner.resolve(int_part));
-
-        None
-    })
+    todo!()
 }

@@ -3,8 +3,8 @@
 #![feature(str_internals)]
 
 use crate::syntax::intern::Interner;
-use crate::syntax::span::{AsFileReader, SourceFile};
-use crate::syntax::token::group_match_number_lit;
+use crate::syntax::span::SourceFile;
+use crate::syntax::token::tokenize_file;
 use std::path::PathBuf;
 
 pub mod syntax;
@@ -12,6 +12,6 @@ pub mod util;
 
 fn main() {
     let mut interner = Interner::new();
-    let source = SourceFile::from_file(PathBuf::from("examples/number.crew")).unwrap();
-    group_match_number_lit(&mut source.reader(), &mut interner);
+    let source = SourceFile::from_file(PathBuf::from("examples/simple_groups.crew")).unwrap();
+    println!("{:#?}", tokenize_file(&mut interner, &source));
 }

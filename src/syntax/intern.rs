@@ -103,6 +103,10 @@ impl InternBuilder<'_> {
         &self.interner.store[self.start..]
     }
 
+    pub fn len(&self) -> usize {
+        self.as_str().len()
+    }
+
     pub fn build(mut self) -> Intern {
         // Get string codepoint length
         let intern_str = self.as_str();

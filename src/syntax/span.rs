@@ -36,14 +36,14 @@ impl SourceFile {
     pub fn head(&self) -> FileLocRef {
         FileLocRef {
             file: self,
-            pos: FilePos::HEAD,
+            raw: FileLocRaw::HEAD,
         }
     }
 }
 
 impl AsFileReader for SourceFile {
     fn reader(&self) -> FileReader {
-        FileReader::new(self, &self.arc.bytes, FilePos::HEAD)
+        FileReader::new(self, &self.arc.bytes, FileLocRaw::HEAD)
     }
 }
 
@@ -72,8 +72,18 @@ pub type SpanRef<'a> = AnySpan<&'a SourceFile>;
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct AnySpan<F> {
     file: F,
-    start: FilePos,
-    end: FilePos,
+    start: FileLocRaw,
+    end: FileLocRaw,
+}
+
+impl Span {
+    pub fn new<FA, FB>(a: &AnyFileLoc<FA>, b: &AnyFileLoc<FB>) -> Self
+    where
+        FA: Borrow<SourceFile>,
+        FB: Borrow<SourceFile>,
+    {
+        SpanRef::new(a, b).as_owned()
+    }
 }
 
 impl<'a> SpanRef<'a> {
@@ -88,7 +98,7 @@ impl<'a> SpanRef<'a> {
             "Cannot construct a Span spanning two different files!"
         );
 
-        let mut locs = [a.pos, b.pos];
+        let mut locs = [a.raw, b.raw];
         locs.sort();
 
         Self {
@@ -119,15 +129,33 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
     pub fn start(&self) -> FileLocRef {
         FileLocRef {
             file: self.file(),
-            pos: self.start,
+            raw: self.start,
         }
     }
 
     pub fn end(&self) -> FileLocRef {
         FileLocRef {
             file: self.file(),
-            pos: self.end,
+            raw: self.end,
         }
+    }
+
+    pub fn set_start<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+        assert_eq!(
+            loc.file(),
+            self.file(),
+            "Cannot set span start from a different file!"
+        );
+        self.start = loc.raw;
+    }
+
+    pub fn set_end<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+        assert_eq!(
+            loc.file(),
+            self.file(),
+            "Cannot set span end from a different file!"
+        );
+        self.end = loc.raw;
     }
 
     pub fn as_ref(&self) -> SpanRef {
@@ -159,12 +187,20 @@ pub type FileLocRef<'a> = AnyFileLoc<&'a SourceFile>;
 #[derive(Debug, Copy, Clone, Hash)]
 pub struct AnyFileLoc<F> {
     file: F,
-    pos: FilePos,
+    raw: FileLocRaw,
 }
 
 impl<F> AnyFileLoc<F> {
     pub fn pos(&self) -> FilePos {
-        self.pos
+        self.raw.pos
+    }
+
+    pub fn line(&self) -> usize {
+        self.raw.line()
+    }
+
+    pub fn col(&self) -> usize {
+        self.raw.col()
     }
 }
 
@@ -173,32 +209,42 @@ impl<F: Borrow<SourceFile>> AnyFileLoc<F> {
         self.file.borrow()
     }
 
+    pub fn as_span(&self) -> SpanRef {
+        SpanRef::new(self, self)
+    }
+
     pub fn as_ref(&self) -> FileLocRef {
         FileLocRef {
             file: self.file(),
-            pos: self.pos,
+            raw: self.raw,
         }
     }
 
     pub fn as_owned(&self) -> FileLoc {
         FileLoc {
             file: self.file().clone(),
-            pos: self.pos,
+            raw: self.raw,
         }
+    }
+}
+
+impl<F: Borrow<SourceFile>> Display for AnyFileLoc<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}:{}", self.line() + 1, self.col() + 1)
     }
 }
 
 impl<F: Borrow<SourceFile>> Eq for AnyFileLoc<F> {}
 impl<F: Borrow<SourceFile>> PartialEq for AnyFileLoc<F> {
     fn eq(&self, other: &Self) -> bool {
-        self.file() == other.file() && self.pos == other.pos
+        self.file() == other.file() && self.raw == other.raw
     }
 }
 
 impl<F: Borrow<SourceFile>> PartialOrd<Self> for AnyFileLoc<F> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.file() == other.file() {
-            Some(self.pos.index.cmp(&other.pos.index))
+            Some(self.raw.index.cmp(&other.raw.index))
         } else {
             None
         }
@@ -206,29 +252,60 @@ impl<F: Borrow<SourceFile>> PartialOrd<Self> for AnyFileLoc<F> {
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct FilePos {
+struct FileLocRaw {
     pub index: usize,
+    pub pos: FilePos,
+}
+
+impl FileLocRaw {
+    pub const HEAD: Self = Self {
+        index: 0,
+        pos: FilePos::HEAD,
+    };
+
+    pub fn line(&self) -> usize {
+        self.pos.line
+    }
+
+    pub fn col(&self) -> usize {
+        self.pos.col
+    }
+}
+
+impl Ord for FileLocRaw {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
+impl PartialOrd for FileLocRaw {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct FilePos {
     pub line: usize,
     pub col: usize,
 }
 
 impl FilePos {
-    pub const HEAD: Self = Self {
-        index: 0,
-        line: 0,
-        col: 0,
-    };
+    pub const HEAD: Self = Self { line: 0, col: 0 };
 }
 
 impl Display for FilePos {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}:{}", self.line + 1, self.col + 1)
+        write!(f, "{}:{}", self.line, self.col)
     }
 }
 
 impl Ord for FilePos {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.index.cmp(&other.index)
+        match self.line.cmp(&other.line) {
+            Ordering::Equal => self.col.cmp(&other.col),
+            prim @ _ => prim,
+        }
     }
 }
 
@@ -248,17 +325,19 @@ pub trait AsFileReader {
 pub struct FileReader<'a> {
     file: &'a SourceFile,
     reader: CharReader<'a>,
-    line: usize,
-    col: usize,
+    next_pos: FilePos,
+    prev_pos: FilePos,
+    prev_idx: usize,
 }
 
 impl<'a> FileReader<'a> {
-    fn new(file: &'a SourceFile, source: &'a [u8], pos: FilePos) -> Self {
+    fn new(file: &'a SourceFile, source: &'a [u8], loc_raw: FileLocRaw) -> Self {
         Self {
             file,
-            reader: CharReader::new(source, pos.index),
-            line: pos.line,
-            col: pos.col,
+            reader: CharReader::new(source, loc_raw.index),
+            next_pos: loc_raw.pos,
+            prev_pos: loc_raw.pos,
+            prev_idx: 0,
         }
     }
 
@@ -284,6 +363,9 @@ impl<'a> FileReader<'a> {
         }
     }
 
+    /// Attempts to match the reader sequence using the handler, committing the state if the return
+    /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
+    /// ignoring all reader state changes otherwise.
     pub fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
     where
         F: FnOnce(&mut FileReader<'a>) -> R,
@@ -302,16 +384,23 @@ impl<'a> FileReader<'a> {
     }
 
     pub fn consume(&mut self) -> ReadAtom {
+        // Save previous state
+        self.prev_pos = self.next_pos;
+        self.prev_idx = self.reader.index();
+
+        // Consume atom
         let result = self.consume_untracked();
+
+        // Update positional state
         match result {
             // Most text editors seem to treat codepoints as characters.
-            ReadAtom::Codepoint(_) => self.col += 1,
+            ReadAtom::Codepoint(_) => self.next_pos.col += 1,
             // These will probably show up as illegal character boxes in the editor.
-            ReadAtom::Unknown(_) => self.col += 1,
+            ReadAtom::Unknown(_) => self.next_pos.col += 1,
             // Newlines, valid or not, are typically treated as newlines by editors.
             ReadAtom::Newline { .. } => {
-                self.line += 1;
-                self.col = 0;
+                self.next_pos.line += 1;
+                self.next_pos.col = 0;
             }
             ReadAtom::Eof => {}
         }
@@ -319,13 +408,24 @@ impl<'a> FileReader<'a> {
         result
     }
 
-    pub fn loc(&self) -> FileLocRef<'a> {
+    /// Returns the location of the most recently read atom.
+    pub fn prev_loc(&self) -> FileLocRef<'a> {
         FileLocRef {
             file: self.file,
-            pos: FilePos {
+            raw: FileLocRaw {
+                index: self.reader.index() - 1,
+                pos: self.next_pos,
+            },
+        }
+    }
+
+    /// Returns the location of the atom about to be consumed.
+    pub fn next_loc(&self) -> FileLocRef<'a> {
+        FileLocRef {
+            file: self.file,
+            raw: FileLocRaw {
                 index: self.reader.index(),
-                line: self.line,
-                col: self.col,
+                pos: self.next_pos,
             },
         }
     }
@@ -383,10 +483,6 @@ struct CharReader<'a> {
 impl<'a> CharReader<'a> {
     pub fn new(source: &'a [u8], index: usize) -> Self {
         Self { source, index }
-    }
-
-    pub fn peek(&self) -> Result<Option<char>, CharReadErr> {
-        self.clone().consume()
     }
 
     pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
@@ -470,14 +566,6 @@ impl ReadAtom {
     /// Converts the atom into a codepoint character for use in rendering or matching.
     /// All malformed atoms are converted into safe-to-display equivalents.
     ///
-    /// The EOF is transformed into the nul character (`\0`).
-    pub fn as_char(self) -> char {
-        self.as_char_or_eof().nul_eof()
-    }
-
-    /// Converts the atom into a codepoint character for use in rendering or matching.
-    /// All malformed atoms are converted into safe-to-display equivalents.
-    ///
     /// The EOF is held in a distinct enum variant to all other characters.
     pub fn as_char_or_eof(self) -> CharOrEof {
         match self {
@@ -489,6 +577,18 @@ impl ReadAtom {
             // Invalid patterns
             Self::Unknown(_) => CharOrEof::Char(Self::UNRECOGNIZED_CHAR),
         }
+    }
+
+    /// Converts the atom into a codepoint character for use in rendering or matching.
+    /// All malformed atoms are converted into safe-to-display equivalents.
+    ///
+    /// The EOF is transformed into the nul character (`\0`).
+    pub fn as_char(self) -> char {
+        self.as_char_or_eof().nul_eof()
+    }
+
+    pub fn as_escaped(self) -> EscapedAtom {
+        EscapedAtom { atom: self }
     }
 }
 
@@ -510,5 +610,21 @@ impl CharOrEof {
 impl From<char> for CharOrEof {
     fn from(char: char) -> Self {
         CharOrEof::Char(char)
+    }
+}
+
+// TODO: Expand for entire strings
+pub struct EscapedAtom {
+    atom: ReadAtom,
+}
+
+impl Display for EscapedAtom {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self.atom {
+            ReadAtom::Codepoint(char) => write!(f, "{}", char),
+            ReadAtom::Unknown(char) => write!(f, "\\u{:x?}", char),
+            ReadAtom::Newline { .. } => write!(f, "\\n"),
+            ReadAtom::Eof => write!(f, "EOF"),
+        }
     }
 }
