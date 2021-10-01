@@ -12,6 +12,6 @@ pub mod util;
 
 fn main() {
     let mut interner = Interner::new();
-    let source = SourceFile::from_file(PathBuf::from("examples/simple_groups.crew")).unwrap();
-    println!("{:#?}", tokenize_file(&mut interner, &source));
+    let source = SourceFile::from_file(PathBuf::from("examples/tokenize.crew")).unwrap();
+    let _ = tokenize_file(&mut interner, &source);
 }

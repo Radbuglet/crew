@@ -180,7 +180,7 @@ impl Eq for Intern {}
 
 impl PartialEq for Intern {
     fn eq(&self, other: &Self) -> bool {
-        assert_eq!(
+        debug_assert_eq!(
             self.set, other.set,
             "Interned strings must come from the same set!"
         );

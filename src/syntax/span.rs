@@ -140,22 +140,31 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         }
     }
 
-    pub fn set_start<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    fn set_pair_unchecked(&mut self, a: FileLocRaw, b: FileLocRaw) {
+        let mut locs = [a, b];
+        locs.sort();
+        self.start = locs[0];
+        self.end = locs[1];
+    }
+
+    pub fn set_left<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
         assert_eq!(
             loc.file(),
             self.file(),
             "Cannot set span start from a different file!"
         );
-        self.start = loc.raw;
+
+        self.set_pair_unchecked(loc.raw, self.end);
     }
 
-    pub fn set_end<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    pub fn set_right<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
         assert_eq!(
             loc.file(),
             self.file(),
             "Cannot set span end from a different file!"
         );
-        self.end = loc.raw;
+
+        self.set_pair_unchecked(self.start, loc.raw);
     }
 
     pub fn as_ref(&self) -> SpanRef {
@@ -228,12 +237,6 @@ impl<F: Borrow<SourceFile>> AnyFileLoc<F> {
     }
 }
 
-impl<F: Borrow<SourceFile>> Display for AnyFileLoc<F> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}:{}", self.line() + 1, self.col() + 1)
-    }
-}
-
 impl<F: Borrow<SourceFile>> Eq for AnyFileLoc<F> {}
 impl<F: Borrow<SourceFile>> PartialEq for AnyFileLoc<F> {
     fn eq(&self, other: &Self) -> bool {
@@ -296,7 +299,7 @@ impl FilePos {
 
 impl Display for FilePos {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}:{}", self.line, self.col)
+        write!(f, "{}:{}", self.line + 1, self.col + 1)
     }
 }
 
@@ -559,10 +562,6 @@ impl ReadAtom {
         }
     }
 
-    pub fn is_eof(&self) -> bool {
-        return *self == ReadAtom::Eof;
-    }
-
     /// Converts the atom into a codepoint character for use in rendering or matching.
     /// All malformed atoms are converted into safe-to-display equivalents.
     ///
@@ -586,10 +585,6 @@ impl ReadAtom {
     pub fn as_char(self) -> char {
         self.as_char_or_eof().nul_eof()
     }
-
-    pub fn as_escaped(self) -> EscapedAtom {
-        EscapedAtom { atom: self }
-    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -610,21 +605,5 @@ impl CharOrEof {
 impl From<char> for CharOrEof {
     fn from(char: char) -> Self {
         CharOrEof::Char(char)
-    }
-}
-
-// TODO: Expand for entire strings
-pub struct EscapedAtom {
-    atom: ReadAtom,
-}
-
-impl Display for EscapedAtom {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self.atom {
-            ReadAtom::Codepoint(char) => write!(f, "{}", char),
-            ReadAtom::Unknown(char) => write!(f, "\\u{:x?}", char),
-            ReadAtom::Newline { .. } => write!(f, "\\n"),
-            ReadAtom::Eof => write!(f, "EOF"),
-        }
     }
 }

@@ -14,7 +14,7 @@
 //! - Shebang ignoring
 //!
 
-use crate::syntax::intern::{Intern, Interner};
+use crate::syntax::intern::{Intern, InternBuilder, Interner};
 use crate::syntax::span::{
     AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
 };
@@ -28,7 +28,7 @@ pub trait AnyToken {
     fn full_span(&self) -> SpanRef;
 }
 
-#[derive(Debug, Clone)] // TODO: Better debug printing
+#[derive(Clone)]
 pub enum Token {
     Group(TokenGroup),
     Ident(TokenIdent),
@@ -49,7 +49,7 @@ impl Token {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenGroup {
     span: Span,
     delimiter: GroupDelimiter,
@@ -110,7 +110,7 @@ impl Into<Token> for TokenGroup {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenIdent {
     span: Span,
     text: Intern,
@@ -128,7 +128,7 @@ impl Into<Token> for TokenIdent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenPunct {
     loc: FileLoc,
     punct: PunctChar,
@@ -146,7 +146,7 @@ impl Into<Token> for TokenPunct {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenStringLit {
     span: Span,
     mode: StringMode,
@@ -165,18 +165,19 @@ impl Into<Token> for TokenStringLit {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum StringComponent {
     Template(TokenGroup),
     Literal(Intern),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenNumberLit {
     span: Span,
     prefix: NumberPrefix,
-    int: Intern,
-    fp: Option<(Intern, Option<Intern>)>,
+    int_part: Intern,
+    float_part: Option<Intern>,
+    // TODO: Support exponents
 }
 
 impl AnyToken for TokenNumberLit {
@@ -214,11 +215,6 @@ enum_meta! {
             left: Some(CharOrEof::Char('[')),
             right: CharOrEof::Char(']'),
         },
-        Angle = GroupDelimiterMeta {
-            name: "angle bracket",
-            left: Some(CharOrEof::Char('<')),
-            right: CharOrEof::Char('>'),
-        },
     }
 
     #[derive(Debug)]
@@ -243,6 +239,8 @@ enum_meta! {
         Period = '.',
         Question = '?',
         Slash = '/',
+        Le = '<',
+        Ge = '>',
     }
 
     #[derive(Debug)]
@@ -299,7 +297,7 @@ pub enum DelimiterMode {
 enum StackFrame {
     Group(TokenGroup),
     String(TokenStringLit),
-    Comment,
+    BlockComment,
 }
 
 impl Into<StackFrame> for TokenGroup {
@@ -316,7 +314,7 @@ impl Into<StackFrame> for TokenStringLit {
 
 // === Tokenizing === //
 
-// TODO: Error reporting mechanisms
+// TODO: Error reporting and recovery
 
 pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: &R) -> TokenGroup {
     let mut reader = source.reader();
@@ -345,30 +343,28 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     }
                     // Group close
                     Some((delimiter, DelimiterMode::Close)) => {
-                        // Pop until we find a corresponding group or exits if we close the top-most
-                        // delimiter, warning on mismatched delimiters. Because the EOF is a group
-                        // delimiter, this code also handles unbalanced groups.
-                        loop {
-                            if let Some(StackFrame::Group(mut child)) = stack.pop() {
-                                child.span.set_end(&reader.prev_loc());
-                                match stack.last_mut() {
-                                    Some(StackFrame::Group(parent)) => {
-                                        parent.tokens_mut().push(Token::Group(child));
+                        assert_eq!(
+                            delimiter,
+                            group.delimiter,
+                            "Delimiter balance error between brace at {} and brace at {}",
+                            group.full_span().start().pos(),
+                            reader.prev_loc().pos(),
+                        );
 
-                                        // TODO: Diagnostic
-                                        if parent.delimiter == delimiter {
-                                            break;
-                                        }
-                                    }
-                                    Some(StackFrame::String(_)) => todo!(),
-                                    Some(StackFrame::Comment) => unreachable!(
-                                        "Tokenizer was parsing groups within a comment. What?"
-                                    ),
-                                    None => return child,
-                                }
-                            } else {
-                                unreachable!();
+                        let child = match stack.pop() {
+                            Some(StackFrame::Group(group)) => group,
+                            _ => unreachable!(),
+                        };
+
+                        match stack.last_mut() {
+                            Some(StackFrame::Group(parent)) => {
+                                parent.tokens_mut().push(child.into())
                             }
+                            Some(StackFrame::String(str)) => {
+                                str.parts.push(StringComponent::Template(child))
+                            }
+                            Some(StackFrame::BlockComment) => unreachable!(),
+                            None => return child,
                         }
 
                         continue;
@@ -386,7 +382,14 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 // We match comments before punctuation because line comments can be parsed as two
                 // '/' puncts back to back and block comments can be parsed as a '/' punct followed
                 // by an '*'.
-                // TODO
+                if group_match_line_comment(&mut reader) {
+                    continue;
+                }
+
+                if group_match_block_comment_start(&mut reader) {
+                    stack.push(StackFrame::BlockComment);
+                    continue;
+                }
 
                 // Match whitespace
                 if group_match_whitespace(&mut reader, false) {
@@ -407,30 +410,117 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 }
 
                 // Match number literal
-                // TODO
+                if let Some(num) = group_match_number_lit(&mut reader, interner) {
+                    if group_match_ident(&mut reader.clone(), interner).is_some() {
+                        panic!("Unexpected digit at {}!", reader.next_loc().pos());
+                    }
 
-                eprintln!(
-                    // TODO
-                    "Unexpected character \"{:?}\" at {}!",
-                    reader.clone().consume(),
-                    reader.next_loc(),
+                    group.tokens_mut().push(Token::NumberLit(num));
+                    continue;
+                }
+
+                panic!(
+                    "Unexpected character in group at {}!",
+                    reader.next_loc().pos()
                 );
             }
-            StackFrame::String(_) => todo!(),
-            StackFrame::Comment => todo!(),
+            StackFrame::String(string) => {
+                let mut intern = interner.begin_intern();
+
+                loop {
+                    // Match EOF
+                    if reader.peek() == ReadAtom::Eof {
+                        panic!(
+                            "Unexpected EOF while parsing string at {}",
+                            string.full_span().start().pos()
+                        );
+                    }
+
+                    // Match closing quote
+                    if string_match_end(&mut reader) {
+                        if intern.len() > 0 {
+                            string.parts.push(StringComponent::Literal(intern.build()));
+                        }
+
+                        let string = match stack.pop() {
+                            Some(StackFrame::String(string)) => string,
+                            _ => unreachable!(),
+                        };
+
+                        match stack.last_mut() {
+                            Some(StackFrame::Group(group)) => {
+                                group.tokens_mut().push(string.into())
+                            }
+                            Some(StackFrame::String(_)) => unreachable!(),
+                            Some(StackFrame::BlockComment) => unreachable!(),
+                            None => unreachable!(),
+                        }
+
+                        break;
+                    }
+
+                    // Match placeholder
+                    if string_match_placeholder_start(&mut reader) {
+                        if intern.len() > 0 {
+                            string.parts.push(StringComponent::Literal(intern.build()));
+                        }
+
+                        stack.push(
+                            TokenGroup::new(
+                                Span::new(&reader.prev_loc(), &reader.prev_loc()),
+                                GroupDelimiter::Brace,
+                            )
+                            .into(),
+                        );
+
+                        break;
+                    }
+
+                    // Match character
+                    if let Some(char) = string_match_char(&mut reader) {
+                        intern.push(char);
+                        continue;
+                    }
+
+                    panic!(
+                        "Unexpected character in string at {}!",
+                        reader.next_loc().pos()
+                    );
+                }
+            }
+            StackFrame::BlockComment => {
+                if group_match_block_comment_start(&mut reader) {
+                    stack.push(StackFrame::BlockComment);
+                    continue;
+                }
+
+                if comment_match_block_end(&mut reader) {
+                    stack.pop();
+                    continue;
+                }
+
+                if reader.peek() == ReadAtom::Eof {
+                    panic!("Unexpected EOF while parsing block comment!");
+                }
+
+                let _ = reader.consume();
+            }
         }
     }
 }
 
-/// Returns `true` if it was able to consume a UNIX shebang. This may match the EOF.
+pub fn match_str(reader: &mut FileReader, text: &str) -> bool {
+    reader.lookahead(|reader| {
+        text.chars()
+            .all(|expected| reader.consume() == ReadAtom::Codepoint(expected))
+    })
+}
+
+/// Returns `true` if it was able to consume a UNIX shebang. Does not match a plain EOF.
 pub fn match_shebang(reader: &mut FileReader) -> bool {
     reader.lookahead(|reader| {
         // Magic "number"
-        if reader.consume() != ReadAtom::Codepoint('#') {
-            return false;
-        }
-
-        if reader.consume() != ReadAtom::Codepoint('!') {
+        if !match_str(reader, "#!") {
             return false;
         }
 
@@ -466,7 +556,7 @@ pub fn group_match_delimiter(reader: &mut FileReader) -> Option<(GroupDelimiter,
     })
 }
 
-/// Matches and consumes a [TokenIdent] that is at least one character long. Does not match the EOF.
+/// Matches and consumes a [TokenIdent] that is at least one character long. Does not match a plain EOF.
 pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Option<TokenIdent> {
     fn match_ident_start(atom: ReadAtom) -> bool {
         let char = atom.as_char();
@@ -510,10 +600,10 @@ pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Op
     })
 }
 
-/// Matches and consumes a single [TokenPunct]. Does not match the EOF.
+/// Matches and consumes a single [TokenPunct]. Does not match a plain EOF.
 pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
     reader.lookahead(|reader| {
-        let loc = reader.next_loc();
+        let start = reader.next_loc();
         let read = match reader.consume() {
             ReadAtom::Codepoint(char) => char,
             _ => return None,
@@ -522,7 +612,7 @@ pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
         PunctChar::values_iter().find_map(move |(punct, char)| {
             if read == *char {
                 Some(TokenPunct {
-                    loc: loc.as_owned(),
+                    loc: start.as_owned(),
                     punct,
                 })
             } else {
@@ -532,8 +622,8 @@ pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
     })
 }
 
-/// Returns `true` if it was able to match and consume a single whitespace character. Matches the EOF
-/// is the `match_eof` flag is enabled.
+/// Returns `true` if it was able to match and consume a single whitespace character. Can match an
+/// empty EOF if the `match_eof` flag is enabled.
 pub fn group_match_whitespace(reader: &mut FileReader, match_eof: bool) -> bool {
     reader.lookahead(|reader| match reader.consume() {
         ReadAtom::Codepoint(char) => char.is_whitespace(),
@@ -543,7 +633,7 @@ pub fn group_match_whitespace(reader: &mut FileReader, match_eof: bool) -> bool 
     })
 }
 
-/// Matches and consumes the beginning of a [TokenStringLit].
+/// Matches and consumes the beginning of a [TokenStringLit]. Does not match a plain EOF.
 ///
 /// ## Syntax
 ///
@@ -586,7 +676,7 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
     })
 }
 
-/// Matches and consumes a single [TokenNumberLit]. Does not match the EOF.
+/// Matches and consumes a single [TokenNumberLit]. Does not match a plain EOF.
 ///
 /// ## Syntax
 ///
@@ -605,8 +695,155 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
 /// See [NumberPrefix] for more information about prefixes.
 ///
 pub fn group_match_number_lit(
-    _reader: &mut FileReader,
-    _interner: &mut Interner,
+    reader: &mut FileReader,
+    interner: &mut Interner,
 ) -> Option<TokenNumberLit> {
-    todo!()
+    fn read_digits(reader: &mut FileReader, intern: &mut InternBuilder<'_>, digits: &str) {
+        fn alphabet_contains(alphabet: &str, char: char) -> bool {
+            let char = char.to_ascii_lowercase();
+            alphabet.chars().any(|allowed| allowed == char)
+        }
+
+        while reader.lookahead(|reader| match reader.consume() {
+            ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
+                intern.push(char.to_ascii_lowercase());
+                true
+            }
+            ReadAtom::Codepoint('_') => true,
+            _ => false,
+        }) {}
+    }
+
+    reader.lookahead(|reader| {
+        let start = reader.next_loc();
+
+        // Attempt to match prefix
+        let prefix = reader
+            .lookahead(|reader| {
+                // Consume '0'
+                if reader.consume() != ReadAtom::Codepoint('0') {
+                    return None;
+                }
+
+                // Consume prefix character
+                let read = reader.consume().as_char().to_ascii_lowercase();
+                NumberPrefix::values_iter().find_map(move |(prefix, meta)| {
+                    if Some(read) == meta.prefix {
+                        Some(prefix)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(NumberPrefix::Decimal);
+
+        // Read integer-part digits
+        let int_part = {
+            let mut builder = interner.begin_intern();
+            read_digits(reader, &mut builder, prefix.meta().digits);
+
+            if builder.len() == 0 {
+                if prefix == NumberPrefix::Decimal {
+                    return None;
+                } else {
+                    panic!("Expected digits after prefix at {}!", start.pos());
+                }
+            }
+            builder.build()
+        };
+
+        // Read floating-part digits
+        let float_part = {
+            // Match period
+            let has_fp = match_str(reader, ".");
+
+            if has_fp {
+                if prefix != NumberPrefix::Decimal {
+                    panic!(
+                        "Cannot specify a floating part for non-decimal numbers at {}.",
+                        reader.prev_loc().pos()
+                    );
+                }
+
+                let mut builder = interner.begin_intern();
+                read_digits(reader, &mut builder, &NumberPrefix::Decimal.meta().digits);
+                Some(builder.build())
+            } else {
+                None
+            }
+        };
+
+        Some(TokenNumberLit {
+            prefix,
+            span: Span::new(&start, &reader.prev_loc().as_owned()),
+            int_part,
+            float_part,
+        })
+    })
+}
+
+pub fn group_match_line_comment(reader: &mut FileReader) -> bool {
+    reader.lookahead(|reader| {
+        if !match_str(reader, "//") {
+            return false;
+        }
+
+        while reader.lookahead(|reader| {
+            let char = reader.consume();
+            !char.is_newline_like() && char != ReadAtom::Eof
+        }) {}
+
+        true
+    })
+}
+
+pub fn group_match_block_comment_start(reader: &mut FileReader) -> bool {
+    match_str(reader, "/*")
+}
+
+pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
+    // Try to match escapes
+    if match_str(reader, "\\t") {
+        return Some('\t');
+    }
+
+    if match_str(reader, "\\n") {
+        return Some('\n');
+    }
+
+    if match_str(reader, "\\\\") {
+        return Some('\\');
+    }
+
+    if match_str(reader, "\\\"") {
+        return Some('"');
+    }
+
+    if match_str(reader, "\\{") {
+        return Some('{');
+    }
+
+    // TODO: More escape sequences!
+
+    // Try to match single characters
+    if let Some(char) = reader.lookahead(|reader| match reader.consume() {
+        ReadAtom::Codepoint(char) => Some(char),
+        _ => None,
+    }) {
+        return Some(char);
+    }
+
+    None
+}
+
+pub fn string_match_placeholder_start(reader: &mut FileReader) -> bool {
+    match_str(reader, "{")
+}
+
+pub fn string_match_end(reader: &mut FileReader) -> bool {
+    match_str(reader, "\"")
+}
+
+pub fn comment_match_block_end(reader: &mut FileReader) -> bool {
+    match_str(reader, "*/")
 }
