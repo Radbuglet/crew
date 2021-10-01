@@ -31,5 +31,7 @@ fn test<A: IMyInterface>(a: u32, b: u32, c: A::TypeAlias) -> A {
 		_ => do_something_else(some_named_arg: true),
 	}
 
+	val _ünicodé_suppõrt = "Héllo! {áll}";
+
 	c.produce()
 }

@@ -1,31 +1,85 @@
 //! # Stage 1 - Tokenizer
 //!
-//! This stage accomplishes two important tasks. First, it groups the source file into balanced
-//! streams--making opaque group consumption (e.g. as done by macros or un-parsable groups) much easier
-//! to implement--while providing the flexibility necessary for users to define custom syntactical
-//! elements. Second, it abstracts over the complexities of Unicode to provide atomic abstractions
-//! (e.g. idents, puncts, strings, comments) over them.
+//! This module contains both the token tree IR and the producer logic for the compiler's
+//! tokenization stage.
 //!
-//! In addition to the benefits of its IR, the tokenizer also provides:
+//! This stage accomplishes two important tasks. First, it groups the source file into balanced
+//! token streams--making opaque group consumption (e.g. as done by macros or un-parsable groups) much
+//! easier to implement--while providing the flexibility necessary for users to define custom
+//! syntactical elements. Second, it abstracts over the complexities of Unicode by providing atomic
+//! abstractions (e.g. idents, puncts, strings, comments) over them.
+//!
+//! In addition to the benefits of its IR, the tokenizer also handles:
 //!
 //! - Early interning of identifiers and literals
 //! - Unbalanced group recovery
 //! - Invalid character recovery
+//! - Literal parsing
 //! - Shebang ignoring
 //!
+//! We merged the lexing and tokenization stages into one tokenization stage because the way characters
+//! are lexed depends upon the token's hierarchical context. The necessity of this context is most
+//! apparent in templated strings because strings and token groups can be nested in one another,
+//! preventing us from distinguishing between code-significant lexemes and the more liberal string
+//! literal character-set without knowing which token we're currently in.
+//!
+//! The closest things to a lexer present in this module are the `mode_match_xx` functions. These
+//! attempt to consume "logical lexemes" but enable the user to select which lexemes can be matched
+//! given the specific context of the main [tokenize_file] routine.
 
 use crate::syntax::intern::{Intern, InternBuilder, Interner};
 use crate::syntax::span::{
-    AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
+    AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Reader, Span, SpanRef,
 };
 use crate::util::enum_meta::{enum_meta, EnumMeta};
 use smallvec::SmallVec;
+use std::iter::FromIterator;
 use std::sync::Arc;
 
-// === Intermediate representation === //
+// === IR === //
 
 pub trait AnyToken {
     fn full_span(&self) -> SpanRef;
+}
+
+#[derive(Default, Clone)]
+pub struct TokenStream {
+    tokens: Arc<Vec<Token>>,
+}
+
+impl TokenStream {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn new_with(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens: Arc::new(tokens),
+        }
+    }
+
+    pub fn tokens(&self) -> &Vec<Token> {
+        &self.tokens
+    }
+
+    pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
+        Arc::make_mut(&mut self.tokens)
+    }
+}
+
+impl FromIterator<Token> for TokenStream {
+    fn from_iter<T: IntoIterator<Item = Token>>(iter: T) -> Self {
+        Self::new_with(iter.into_iter().collect())
+    }
+}
+
+impl<'a> IntoIterator for &'a TokenStream {
+    type Item = &'a Token;
+    type IntoIter = std::slice::Iter<'a, Token>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tokens().iter()
+    }
 }
 
 #[derive(Clone)]
@@ -53,21 +107,21 @@ impl Token {
 pub struct TokenGroup {
     span: Span,
     delimiter: GroupDelimiter,
-    tokens: Arc<Vec<Token>>,
+    stream: TokenStream,
 }
 
 impl TokenGroup {
     pub fn new(span: Span, delimiter: GroupDelimiter) -> Self {
         Self {
-            tokens: Arc::new(Vec::new()),
+            stream: TokenStream::new(),
             span,
             delimiter,
         }
     }
 
-    pub fn new_with(span: Span, delimiter: GroupDelimiter, tokens: Arc<Vec<Token>>) -> Self {
+    pub fn new_with(span: Span, delimiter: GroupDelimiter, tokens: Vec<Token>) -> Self {
         Self {
-            tokens,
+            stream: TokenStream::new_with(tokens),
             span,
             delimiter,
         }
@@ -81,12 +135,16 @@ impl TokenGroup {
         self.delimiter = delimiter;
     }
 
+    pub fn stream(&self) -> &TokenStream {
+        &self.stream
+    }
+
     pub fn tokens(&self) -> &Vec<Token> {
-        &self.tokens
+        self.stream.tokens()
     }
 
     pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
-        Arc::make_mut(&mut self.tokens)
+        self.stream.tokens_mut()
     }
 
     pub fn beginning(&self) -> FileLocRef {
@@ -412,7 +470,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 // Match number literal
                 if let Some(num) = group_match_number_lit(&mut reader, interner) {
                     if group_match_ident(&mut reader.clone(), interner).is_some() {
-                        panic!("Unexpected digit at {}!", reader.next_loc().pos());
+                        panic!("Unexpected digit at {}", reader.next_loc().pos());
                     }
 
                     group.tokens_mut().push(Token::NumberLit(num));

@@ -62,7 +62,9 @@ impl PartialEq for SourceFile {
 
 impl Debug for SourceFile {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "SourceFile {{ path: {:?}, .. }}", self.arc.path)
+        f.debug_struct("SourceFile")
+            .field("path", &self.arc.path)
+            .finish_non_exhaustive()
     }
 }
 
@@ -320,58 +322,21 @@ impl PartialOrd for FilePos {
 
 // === Reader === //
 
-pub trait AsFileReader {
-    fn reader(&self) -> FileReader;
-}
+pub trait Reader: Clone {
+    type Output;
 
-#[derive(Clone)]
-pub struct FileReader<'a> {
-    file: &'a SourceFile,
-    reader: CharReader<'a>,
-    next_pos: FilePos,
-    prev_pos: FilePos,
-    prev_idx: usize,
-}
+    fn consume(&mut self) -> Self::Output;
 
-impl<'a> FileReader<'a> {
-    fn new(file: &'a SourceFile, source: &'a [u8], loc_raw: FileLocRaw) -> Self {
-        Self {
-            file,
-            reader: CharReader::new(source, loc_raw.index),
-            next_pos: loc_raw.pos,
-            prev_pos: loc_raw.pos,
-            prev_idx: 0,
-        }
-    }
-
-    fn consume_untracked(&mut self) -> ReadAtom {
-        match self.reader.consume() {
-            // Match CRLF
-            Ok(Some('\r')) => match self.reader.consume() {
-                Ok(Some('\n')) => ReadAtom::Newline { valid: true },
-                _ => ReadAtom::Newline { valid: false },
-            },
-
-            // Match LF
-            Ok(Some('\n')) => ReadAtom::Newline { valid: true },
-
-            // Match char
-            Ok(Some(char)) => ReadAtom::Codepoint(char),
-
-            // Match EOF
-            Ok(None) => ReadAtom::Eof,
-
-            // Match read errors
-            Err(CharReadErr::BadUnicode(code)) => ReadAtom::Unknown(code),
-        }
+    fn peek(&self) -> Self::Output {
+        self.clone().consume()
     }
 
     /// Attempts to match the reader sequence using the handler, committing the state if the return
     /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
     /// ignoring all reader state changes otherwise.
-    pub fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
+    fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
     where
-        F: FnOnce(&mut FileReader<'a>) -> R,
+        F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
     {
         let mut lookahead = self.clone();
@@ -382,60 +347,24 @@ impl<'a> FileReader<'a> {
         res.into_result()
     }
 
-    pub fn peek(&self) -> ReadAtom {
-        self.clone().consume_untracked()
+    fn peek_ahead<F, R>(&self, handler: F) -> R::Ret
+    where
+        F: FnOnce(&mut Self) -> R,
+        R: LookaheadResult,
+    {
+        handler(&mut self.clone()).into_result()
     }
 
-    pub fn consume(&mut self) -> ReadAtom {
-        // Save previous state
-        self.prev_pos = self.next_pos;
-        self.prev_idx = self.reader.index();
-
-        // Consume atom
-        let result = self.consume_untracked();
-
-        // Update positional state
-        match result {
-            // Most text editors seem to treat codepoints as characters.
-            ReadAtom::Codepoint(_) => self.next_pos.col += 1,
-            // These will probably show up as illegal character boxes in the editor.
-            ReadAtom::Unknown(_) => self.next_pos.col += 1,
-            // Newlines, valid or not, are typically treated as newlines by editors.
-            ReadAtom::Newline { .. } => {
-                self.next_pos.line += 1;
-                self.next_pos.col = 0;
-            }
-            ReadAtom::Eof => {}
-        }
-
-        result
-    }
-
-    /// Returns the location of the most recently read atom.
-    pub fn prev_loc(&self) -> FileLocRef<'a> {
-        FileLocRef {
-            file: self.file,
-            raw: FileLocRaw {
-                index: self.reader.index() - 1,
-                pos: self.next_pos,
-            },
-        }
-    }
-
-    /// Returns the location of the atom about to be consumed.
-    pub fn next_loc(&self) -> FileLocRef<'a> {
-        FileLocRef {
-            file: self.file,
-            raw: FileLocRaw {
-                index: self.reader.index(),
-                pos: self.next_pos,
-            },
-        }
+    fn consume_while<F>(&mut self, handler: &mut F)
+    where
+        F: FnMut(&mut Self) -> bool,
+    {
+        while self.lookahead(&mut *handler) {}
     }
 }
 
 pub trait LookaheadResult {
-    type Ret: Sized;
+    type Ret;
 
     fn is_truthy(&self) -> bool;
     fn into_result(self) -> Self::Ret;
@@ -465,6 +394,18 @@ impl<T> LookaheadResult for Option<T> {
     }
 }
 
+impl<T, E> LookaheadResult for Result<T, E> {
+    type Ret = Self;
+
+    fn is_truthy(&self) -> bool {
+        self.is_ok()
+    }
+
+    fn into_result(self) -> Self::Ret {
+        self
+    }
+}
+
 impl<T> LookaheadResult for (bool, T) {
     type Ret = T;
 
@@ -474,6 +415,111 @@ impl<T> LookaheadResult for (bool, T) {
 
     fn into_result(self) -> Self::Ret {
         self.1
+    }
+}
+
+pub trait AsFileReader {
+    fn reader(&self) -> FileReader;
+}
+
+#[derive(Clone)]
+pub struct FileReader<'a> {
+    file: &'a SourceFile,
+    reader: CharReader<'a>,
+    next_pos: FilePos,
+    prev_pos: FilePos,
+    prev_idx: usize,
+}
+
+impl<'a> FileReader<'a> {
+    fn new(file: &'a SourceFile, source: &'a [u8], loc_raw: FileLocRaw) -> Self {
+        Self {
+            file,
+            reader: CharReader::new(source, loc_raw.index),
+            next_pos: loc_raw.pos,
+            prev_pos: loc_raw.pos,
+            prev_idx: 0,
+        }
+    }
+
+    fn consume_untracked(&mut self) -> ReadAtom {
+        match self.reader.consume() {
+            // Match CRLF
+            Ok(Some('\r')) => {
+                let valid = self
+                    .reader
+                    .lookahead(|reader| reader.consume() == Ok(Some('\n')));
+
+                ReadAtom::Newline { valid }
+            }
+
+            // Match LF
+            Ok(Some('\n')) => ReadAtom::Newline { valid: true },
+
+            // Match char
+            Ok(Some(char)) => ReadAtom::Codepoint(char),
+
+            // Match EOF
+            Ok(None) => ReadAtom::Eof,
+
+            // Match read errors
+            Err(CharReadErr::BadUnicode(code)) => ReadAtom::Unknown(code),
+        }
+    }
+
+    /// Returns the location of the most recently read atom.
+    pub fn prev_loc(&self) -> FileLocRef<'a> {
+        FileLocRef {
+            file: self.file,
+            raw: FileLocRaw {
+                index: self.reader.index() - 1,
+                pos: self.next_pos,
+            },
+        }
+    }
+
+    /// Returns the location of the atom about to be consumed.
+    pub fn next_loc(&self) -> FileLocRef<'a> {
+        FileLocRef {
+            file: self.file,
+            raw: FileLocRaw {
+                index: self.reader.index(),
+                pos: self.next_pos,
+            },
+        }
+    }
+}
+
+impl Reader for FileReader<'_> {
+    type Output = ReadAtom;
+
+    fn consume(&mut self) -> Self::Output {
+        // Save previous state
+        self.prev_pos = self.next_pos;
+        self.prev_idx = self.reader.index();
+
+        // Consume atom
+        let result = self.consume_untracked();
+
+        // Update positional state
+        match result {
+            // Most text editors seem to treat codepoints as characters.
+            ReadAtom::Codepoint(_) => self.next_pos.col += 1,
+            // These will probably show up as illegal character boxes in the editor.
+            ReadAtom::Unknown(_) => self.next_pos.col += 1,
+            // Newlines, valid or not, are typically treated as newlines by editors.
+            ReadAtom::Newline { .. } => {
+                self.next_pos.line += 1;
+                self.next_pos.col = 0;
+            }
+            ReadAtom::Eof => {}
+        }
+
+        result
+    }
+
+    fn peek(&self) -> Self::Output {
+        self.clone().consume_untracked()
     }
 }
 
@@ -488,7 +534,15 @@ impl<'a> CharReader<'a> {
         Self { source, index }
     }
 
-    pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+impl Reader for CharReader<'_> {
+    type Output = Result<Option<char>, CharReadErr>;
+
+    fn consume(&mut self) -> Self::Output {
         let mut stream = self.source.iter();
 
         // Consume char
@@ -506,10 +560,6 @@ impl<'a> CharReader<'a> {
         self.index += start - stream.len();
 
         Ok(char)
-    }
-
-    pub fn index(&self) -> usize {
-        self.index
     }
 }
 
