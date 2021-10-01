@@ -355,11 +355,11 @@ pub trait Reader: Clone {
         handler(&mut self.clone()).into_result()
     }
 
-    fn consume_while<F>(&mut self, handler: &mut F)
+    fn consume_while<F>(&mut self, mut handler: F)
     where
         F: FnMut(&mut Self) -> bool,
     {
-        while self.lookahead(&mut *handler) {}
+        while self.lookahead(&mut handler) {}
     }
 }
 

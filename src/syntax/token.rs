@@ -235,7 +235,6 @@ pub struct TokenNumberLit {
     prefix: NumberPrefix,
     int_part: Intern,
     float_part: Option<Intern>,
-    // TODO: Support exponents
 }
 
 impl AnyToken for TokenNumberLit {
@@ -324,8 +323,6 @@ enum_meta! {
     #[derive(Debug)]
     pub enum(Option<char>) StringMode {
         Normal = None,
-        Ascii = Some('a'),
-        Raw = Some('r'),
         Templated = Some('$'),
     }
 }
@@ -371,8 +368,6 @@ impl Into<StackFrame> for TokenStringLit {
 }
 
 // === Tokenizing === //
-
-// TODO: Error reporting and recovery
 
 pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: &R) -> TokenGroup {
     let mut reader = source.reader();
@@ -484,14 +479,24 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
             }
             StackFrame::String(string) => {
                 let mut intern = interner.begin_intern();
-
                 loop {
                     // Match EOF
                     if reader.peek() == ReadAtom::Eof {
                         panic!(
-                            "Unexpected EOF while parsing string at {}",
+                            "Unexpected EOF while parsing string starting at {}",
                             string.full_span().start().pos()
                         );
+                    }
+
+                    // Match multiline escape
+                    if string_match_multiline_escape(&mut reader) {
+                        continue;
+                    }
+
+                    // Match character
+                    if let Some(char) = string_match_char(&mut reader) {
+                        intern.push(char);
+                        continue;
                     }
 
                     // Match closing quote
@@ -518,7 +523,9 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     }
 
                     // Match placeholder
-                    if string_match_placeholder_start(&mut reader) {
+                    if string.mode == StringMode::Templated
+                        && string_match_placeholder_start(&mut reader)
+                    {
                         if intern.len() > 0 {
                             string.parts.push(StringComponent::Literal(intern.build()));
                         }
@@ -532,12 +539,6 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                         );
 
                         break;
-                    }
-
-                    // Match character
-                    if let Some(char) = string_match_char(&mut reader) {
-                        intern.push(char);
-                        continue;
                     }
 
                     panic!(
@@ -561,6 +562,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     panic!("Unexpected EOF while parsing block comment!");
                 }
 
+                // Yes, this ignores invalid unicode characters. Comments really are the wild west.
                 let _ = reader.consume();
             }
         }
@@ -570,7 +572,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
 pub fn match_str(reader: &mut FileReader, text: &str) -> bool {
     reader.lookahead(|reader| {
         text.chars()
-            .all(|expected| reader.consume() == ReadAtom::Codepoint(expected))
+            .all(|expected| reader.consume().as_char() == expected)
     })
 }
 
@@ -616,39 +618,33 @@ pub fn group_match_delimiter(reader: &mut FileReader) -> Option<(GroupDelimiter,
 
 /// Matches and consumes a [TokenIdent] that is at least one character long. Does not match a plain EOF.
 pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Option<TokenIdent> {
-    fn match_ident_start(atom: ReadAtom) -> bool {
-        let char = atom.as_char();
-        char.is_alphabetic() || char == '_'
-    }
-
-    fn match_ident_subsequent(atom: ReadAtom) -> bool {
-        let char = atom.as_char();
-        char.is_alphanumeric() || char == '_'
-    }
-
     reader.lookahead(|reader| {
         let mut intern = interner.begin_intern();
         let start = reader.next_loc();
 
-        // Read identifier start
-        {
-            let start = reader.consume();
-            if !match_ident_start(start) {
-                return None;
-            }
-            intern.push(start.as_char());
-        }
-
-        // Read identifier subsequent
-        while reader.lookahead(|reader| {
-            let subsequent = reader.consume();
-            if match_ident_subsequent(subsequent) {
-                intern.push(subsequent.as_char());
+        // Match identifier start
+        if !reader.lookahead(|reader| {
+            let char = reader.consume().as_char();
+            if char.is_alphabetic() || char == '_' {
+                intern.push(char);
                 true
             } else {
                 false
             }
-        }) {}
+        }) {
+            return None;
+        }
+
+        // Match identifier subsequent
+        reader.consume_while(|reader| {
+            let char = reader.consume().as_char();
+            if char.is_alphanumeric() || char == '_' {
+                intern.push(char);
+                true
+            } else {
+                false
+            }
+        });
 
         // Build identifier
         Some(TokenIdent {
@@ -762,14 +758,14 @@ pub fn group_match_number_lit(
             alphabet.chars().any(|allowed| allowed == char)
         }
 
-        while reader.lookahead(|reader| match reader.consume() {
+        reader.consume_while(|reader| match reader.consume() {
             ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
                 intern.push(char.to_ascii_lowercase());
                 true
             }
             ReadAtom::Codepoint('_') => true,
             _ => false,
-        }) {}
+        });
     }
 
     reader.lookahead(|reader| {
@@ -846,10 +842,10 @@ pub fn group_match_line_comment(reader: &mut FileReader) -> bool {
             return false;
         }
 
-        while reader.lookahead(|reader| {
+        reader.consume_while(|reader| {
             let char = reader.consume();
             !char.is_newline_like() && char != ReadAtom::Eof
-        }) {}
+        });
 
         true
     })
@@ -859,33 +855,53 @@ pub fn group_match_block_comment_start(reader: &mut FileReader) -> bool {
     match_str(reader, "/*")
 }
 
+pub fn string_match_multiline_escape(reader: &mut FileReader) -> bool {
+    if match_str(reader, "\\\n") {
+        reader.consume_while(|reader| group_match_whitespace(reader, false));
+        true
+    } else {
+        false
+    }
+}
+
 pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
     // Try to match escapes
-    if match_str(reader, "\\t") {
-        return Some('\t');
-    }
+    let escape = reader.lookahead(|reader| {
+        if match_str(reader, "\\") {
+            match reader.consume() {
+                // ASCII characters
+                ReadAtom::Codepoint('r') => Ok(Some('\r')),
+                ReadAtom::Codepoint('n') => Ok(Some('\n')),
+                ReadAtom::Codepoint('t') => Ok(Some('\t')),
+                ReadAtom::Codepoint('0') => Ok(Some('\0')),
 
-    if match_str(reader, "\\n") {
-        return Some('\n');
-    }
+                // Delimiter escapes
+                ReadAtom::Codepoint('\\') => Ok(Some('\\')),
+                ReadAtom::Codepoint('"') => Ok(Some('"')),
+                ReadAtom::Codepoint('\'') => Ok(Some('\'')),
+                ReadAtom::Codepoint('{') => Ok(Some('{')),
 
-    if match_str(reader, "\\\\") {
-        return Some('\\');
-    }
+                // Unicode
+                ReadAtom::Codepoint('u') => todo!("Unicode escapes not supported yet!"),
+                _ => Err(()),
+            }
+        } else {
+            Ok(None)
+        }
+    });
 
-    if match_str(reader, "\\\"") {
-        return Some('"');
+    match escape {
+        Ok(Some(escaped)) => return Some(escaped),
+        Err(()) => panic!("Invalid escape sequence at {}", reader.next_loc().pos()),
+        Ok(None) => {}
     }
-
-    if match_str(reader, "\\{") {
-        return Some('{');
-    }
-
-    // TODO: More escape sequences!
 
     // Try to match single characters
     if let Some(char) = reader.lookahead(|reader| match reader.consume() {
+        ReadAtom::Codepoint('"') => None,
+        ReadAtom::Codepoint('{') => None,
         ReadAtom::Codepoint(char) => Some(char),
+        ReadAtom::Newline { .. } => Some('\n'),
         _ => None,
     }) {
         return Some(char);
