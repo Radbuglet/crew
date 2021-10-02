@@ -27,11 +27,11 @@
 //! attempt to consume "logical lexemes" but enable the user to select which lexemes can be matched
 //! given the specific context of the main [tokenize_file] routine.
 
-use crate::syntax::intern::{Intern, InternBuilder, Interner};
 use crate::syntax::span::{
     AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Reader, Span, SpanRef,
 };
 use crate::util::enum_meta::{enum_meta, EnumMeta};
+use crate::util::intern::{Intern, InternBuilder, Interner};
 use smallvec::SmallVec;
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ pub trait AnyToken {
 
 #[derive(Default, Clone)]
 pub struct TokenStream {
+    // TODO: Make COW system more generic
     tokens: Arc<Vec<Token>>,
 }
 
@@ -105,9 +106,9 @@ impl Token {
 
 #[derive(Clone)]
 pub struct TokenGroup {
-    span: Span,
-    delimiter: GroupDelimiter,
-    stream: TokenStream,
+    pub span: Span,
+    pub delimiter: GroupDelimiter,
+    pub stream: TokenStream,
 }
 
 impl TokenGroup {
@@ -119,26 +120,6 @@ impl TokenGroup {
         }
     }
 
-    pub fn new_with(span: Span, delimiter: GroupDelimiter, tokens: Vec<Token>) -> Self {
-        Self {
-            stream: TokenStream::new_with(tokens),
-            span,
-            delimiter,
-        }
-    }
-
-    pub fn delimiter(&self) -> GroupDelimiter {
-        self.delimiter
-    }
-
-    pub fn set_delimiter(&mut self, delimiter: GroupDelimiter) {
-        self.delimiter = delimiter;
-    }
-
-    pub fn stream(&self) -> &TokenStream {
-        &self.stream
-    }
-
     pub fn tokens(&self) -> &Vec<Token> {
         self.stream.tokens()
     }
@@ -147,11 +128,11 @@ impl TokenGroup {
         self.stream.tokens_mut()
     }
 
-    pub fn beginning(&self) -> FileLocRef {
+    pub fn opening_brace(&self) -> FileLocRef {
         self.span.start()
     }
 
-    pub fn end(&self) -> FileLocRef {
+    pub fn closing_brace(&self) -> FileLocRef {
         self.span.end()
     }
 }
@@ -170,8 +151,8 @@ impl Into<Token> for TokenGroup {
 
 #[derive(Clone)]
 pub struct TokenIdent {
-    span: Span,
-    text: Intern,
+    pub span: Span,
+    pub text: Intern,
 }
 
 impl AnyToken for TokenIdent {
@@ -188,8 +169,8 @@ impl Into<Token> for TokenIdent {
 
 #[derive(Clone)]
 pub struct TokenPunct {
-    loc: FileLoc,
-    punct: PunctChar,
+    pub loc: FileLoc,
+    pub punct: PunctChar,
 }
 
 impl AnyToken for TokenPunct {
@@ -206,9 +187,10 @@ impl Into<Token> for TokenPunct {
 
 #[derive(Clone)]
 pub struct TokenStringLit {
-    span: Span,
-    mode: StringMode,
-    parts: SmallVec<[StringComponent; 1]>,
+    pub span: Span,
+    pub mode: StringMode,
+    // TODO: Move to a COW
+    pub parts: SmallVec<[StringComponent; 1]>,
 }
 
 impl AnyToken for TokenStringLit {
@@ -224,17 +206,17 @@ impl Into<Token> for TokenStringLit {
 }
 
 #[derive(Clone)]
-enum StringComponent {
+pub enum StringComponent {
     Template(TokenGroup),
     Literal(Intern),
 }
 
 #[derive(Clone)]
 pub struct TokenNumberLit {
-    span: Span,
-    prefix: NumberPrefix,
-    int_part: Intern,
-    float_part: Option<Intern>,
+    pub span: Span,
+    pub prefix: NumberPrefix,
+    pub int_part: Intern,
+    pub float_part: Option<Intern>,
 }
 
 impl AnyToken for TokenNumberLit {
@@ -248,6 +230,9 @@ impl Into<Token> for TokenNumberLit {
         Token::NumberLit(self)
     }
 }
+
+pub const DIGITS_DECIMAL: &'static str = "0123456789";
+pub const DIGITS_HEXADECIMAL: &'static str = "0123456789abcdef";
 
 enum_meta! {
     #[derive(Debug)]
@@ -304,7 +289,7 @@ enum_meta! {
     pub enum(NumberPrefixMeta) NumberPrefix {
         Decimal = NumberPrefixMeta {
             prefix: None,
-            digits: "0123456789",
+            digits: DIGITS_DECIMAL,
         },
         Octal = NumberPrefixMeta {
             prefix: Some('o'),
@@ -312,7 +297,7 @@ enum_meta! {
         },
         Hexadecimal = NumberPrefixMeta {
             prefix: Some('x'),
-            digits: "0123456789abcdef",
+            digits: DIGITS_HEXADECIMAL,
         },
         Binary = NumberPrefixMeta {
             prefix: Some('b'),
@@ -425,6 +410,9 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     None => {}
                 }
 
+                // Sanity check
+                debug_assert_ne!(reader.peek(), ReadAtom::Eof);
+
                 // Match string literal start
                 if let Some(token) = group_match_string_start(&mut reader) {
                     stack.push(StackFrame::String(token));
@@ -446,7 +434,6 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
 
                 // Match whitespace
                 if group_match_whitespace(&mut reader, false) {
-                    // EOF should be unreachable here.
                     continue;
                 }
 
@@ -489,19 +476,22 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     }
 
                     // Match multiline escape
+                    // We match multiline escapes before other character escapes because the latter
+                    // does not recognize the newline escape.
                     if string_match_multiline_escape(&mut reader) {
                         continue;
                     }
 
-                    // Match character
-                    if let Some(char) = string_match_char(&mut reader) {
+                    // We match escape sequences before any special delimiter characters because the
+                    // escape might be for a delimiter.
+                    if let Some(char) = string_match_escape(&mut reader) {
                         intern.push(char);
                         continue;
                     }
 
                     // Match closing quote
                     if string_match_end(&mut reader) {
-                        if intern.len() > 0 {
+                        if !intern.is_empty() {
                             string.parts.push(StringComponent::Literal(intern.build()));
                         }
 
@@ -526,7 +516,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     if string.mode == StringMode::Templated
                         && string_match_placeholder_start(&mut reader)
                     {
-                        if intern.len() > 0 {
+                        if !intern.is_empty() {
                             string.parts.push(StringComponent::Literal(intern.build()));
                         }
 
@@ -539,6 +529,12 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                         );
 
                         break;
+                    }
+
+                    // Match character
+                    if let Some(char) = string_match_char(&mut reader) {
+                        intern.push(char);
+                        continue;
                     }
 
                     panic!(
@@ -796,7 +792,7 @@ pub fn group_match_number_lit(
             let mut builder = interner.begin_intern();
             read_digits(reader, &mut builder, prefix.meta().digits);
 
-            if builder.len() == 0 {
+            if builder.is_empty() {
                 if prefix == NumberPrefix::Decimal {
                     return None;
                 } else {
@@ -864,42 +860,37 @@ pub fn string_match_multiline_escape(reader: &mut FileReader) -> bool {
     }
 }
 
-pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
-    // Try to match escapes
-    let escape = reader.lookahead(|reader| {
+pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
+    reader.lookahead(|reader| {
         if match_str(reader, "\\") {
             match reader.consume() {
                 // ASCII characters
-                ReadAtom::Codepoint('r') => Ok(Some('\r')),
-                ReadAtom::Codepoint('n') => Ok(Some('\n')),
-                ReadAtom::Codepoint('t') => Ok(Some('\t')),
-                ReadAtom::Codepoint('0') => Ok(Some('\0')),
+                ReadAtom::Codepoint('r') => Some('\r'),
+                ReadAtom::Codepoint('n') => Some('\n'),
+                ReadAtom::Codepoint('t') => Some('\t'),
+                ReadAtom::Codepoint('0') => Some('\0'),
 
                 // Delimiter escapes
-                ReadAtom::Codepoint('\\') => Ok(Some('\\')),
-                ReadAtom::Codepoint('"') => Ok(Some('"')),
-                ReadAtom::Codepoint('\'') => Ok(Some('\'')),
-                ReadAtom::Codepoint('{') => Ok(Some('{')),
+                ReadAtom::Codepoint('\\') => Some('\\'),
+                ReadAtom::Codepoint('"') => Some('"'),
+                ReadAtom::Codepoint('\'') => Some('\''),
+                ReadAtom::Codepoint('{') => Some('{'),
 
                 // Unicode
                 ReadAtom::Codepoint('u') => todo!("Unicode escapes not supported yet!"),
-                _ => Err(()),
+                _ => panic!(
+                    "Invalid character escape sequence at {}!",
+                    reader.prev_loc().pos()
+                ),
             }
         } else {
-            Ok(None)
+            None
         }
-    });
+    })
+}
 
-    match escape {
-        Ok(Some(escaped)) => return Some(escaped),
-        Err(()) => panic!("Invalid escape sequence at {}", reader.next_loc().pos()),
-        Ok(None) => {}
-    }
-
-    // Try to match single characters
+pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
     if let Some(char) = reader.lookahead(|reader| match reader.consume() {
-        ReadAtom::Codepoint('"') => None,
-        ReadAtom::Codepoint('{') => None,
         ReadAtom::Codepoint(char) => Some(char),
         ReadAtom::Newline { .. } => Some('\n'),
         _ => None,

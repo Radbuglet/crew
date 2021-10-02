@@ -107,6 +107,10 @@ impl InternBuilder<'_> {
         self.as_str().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.as_str().is_empty()
+    }
+
     pub fn build(mut self) -> Intern {
         // Get string codepoint length
         let intern_str = self.as_str();
@@ -141,11 +145,21 @@ impl InternBuilder<'_> {
             self.discard_tmp();
             intern
         } else {
+            log::trace!("Interned \"{}\" with hash {}", intern_str, hash);
+
             let intern = Intern {
                 start: self.start,
                 len,
                 set: self.interner.set,
             };
+            self.interner.lookup.insert(
+                hash,
+                TableEntry {
+                    hash,
+                    offset: self.start,
+                },
+                |entry| entry.hash,
+            );
             self.start = self.interner.store.len();
             intern
         }

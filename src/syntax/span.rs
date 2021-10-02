@@ -488,6 +488,10 @@ impl<'a> FileReader<'a> {
             },
         }
     }
+
+    pub fn file(&self) -> &'a SourceFile {
+        self.file
+    }
 }
 
 impl Reader for FileReader<'_> {
