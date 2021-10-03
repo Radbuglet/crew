@@ -15,5 +15,6 @@ fn main() {
 
     let mut interner = Interner::new();
     let source = SourceFile::from_file(PathBuf::from("examples/tokenize.crew")).unwrap();
-    let _ = tokenize_file(&mut interner, &source);
+    let tokens = tokenize_file(&mut interner, &source);
+    println!("Tokenized source: {}", tokens);
 }

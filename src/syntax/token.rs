@@ -33,16 +33,17 @@ use crate::syntax::span::{
 use crate::util::enum_meta::{enum_meta, EnumMeta};
 use crate::util::intern::{Intern, InternBuilder, Interner};
 use smallvec::SmallVec;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::sync::Arc;
 
 // === IR === //
 
-pub trait AnyToken {
+pub trait AnyToken: Display {
     fn full_span(&self) -> SpanRef;
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct TokenStream {
     // TODO: Make COW system more generic
     tokens: Arc<Vec<Token>>,
@@ -83,7 +84,7 @@ impl<'a> IntoIterator for &'a TokenStream {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Token {
     Group(TokenGroup),
     Ident(TokenIdent),
@@ -104,7 +105,7 @@ impl Token {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenGroup {
     pub span: Span,
     pub delimiter: GroupDelimiter,
@@ -149,7 +150,7 @@ impl Into<Token> for TokenGroup {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenIdent {
     pub span: Span,
     pub text: Intern,
@@ -167,7 +168,7 @@ impl Into<Token> for TokenIdent {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenPunct {
     pub loc: FileLoc,
     pub punct: PunctChar,
@@ -185,7 +186,7 @@ impl Into<Token> for TokenPunct {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenStringLit {
     pub span: Span,
     pub mode: StringMode,
@@ -205,13 +206,13 @@ impl Into<Token> for TokenStringLit {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum StringComponent {
     Template(TokenGroup),
     Literal(Intern),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TokenNumberLit {
     pub span: Span,
     pub prefix: NumberPrefix,
@@ -323,6 +324,94 @@ pub struct GroupDelimiterMeta {
 pub struct NumberPrefixMeta {
     prefix: Option<char>,
     digits: &'static str,
+}
+
+// === IR printing === //
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        self.as_any().fmt(f)
+    }
+}
+
+impl Display for TokenStream {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let mut first = true;
+        for token in self.tokens() {
+            if !first {
+                write!(f, " ")?;
+            }
+            token.fmt(f)?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
+impl Display for TokenGroup {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        let delimiter = self.delimiter.meta();
+
+        match (delimiter.left, delimiter.right) {
+            (Some(CharOrEof::Char(start)), CharOrEof::Char(end)) => {
+                write!(f, "{} ", start)?;
+                self.stream.fmt(f)?;
+                write!(f, " {}", end)?;
+                Ok(())
+            }
+            (None, CharOrEof::Eof) => self.stream.fmt(f),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Display for TokenIdent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.text)
+    }
+}
+
+impl Display for TokenPunct {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}", self.punct.meta())
+    }
+}
+
+impl Display for TokenStringLit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        if let Some(prefix_char) = self.mode.meta() {
+            write!(f, "{}", prefix_char)?;
+        }
+        write!(f, "\"")?;
+        for comp in &self.parts {
+            comp.fmt(f)?;
+        }
+        write!(f, "\"")?;
+        Ok(())
+    }
+}
+
+impl Display for TokenNumberLit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        if let Some(prefix) = self.prefix.meta().prefix {
+            write!(f, "0{}", prefix)?;
+        }
+        write!(f, "{}", self.int_part)?;
+        if let Some(fp) = &self.float_part {
+            write!(f, ".{}", fp)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for StringComponent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            StringComponent::Literal(literal) => literal.fmt(f),
+            StringComponent::Template(group) => group.fmt(f),
+        }
+    }
 }
 
 // === Working IR === //

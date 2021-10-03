@@ -3,7 +3,7 @@
 ## Tokenizer
 
 - [x] Implement public tokenizer IR interface
-- [ ] Implement token/span debug printer
+- [x] Implement token/span printing
 - [ ] Improve string literal handling:
   - [x] Multiline strings 
   - [ ] Unicode escapes
@@ -14,14 +14,16 @@
 - [ ] Preserve doc and delimiter comments
 - [ ] Revisit handling of invalid newlines/characters
 - [ ] Reconsider character groups
+- [ ] Implement error recovery system
 - [ ] Test suite
 
 ## Infrastructure
 
 - [x] Trace logging
+- [ ] Implement page-based interner
+- [ ] Generic copy-on-write system
 - [ ] Diagnostic system
 - [ ] Better backing system
-- [ ] More generic interner (`bumpalo`-style allocator with pages?)
 - [ ] Task system
 - [ ] Crash reporter
 
@@ -29,32 +31,7 @@
 
 - [ ] Create reader
 - [ ] Create parsing traits (similar to `syn`)
-- [ ] Define expressions
-- [ ] Define attributes
-- [ ] Define items
-- [ ] Define modules
-
-## Semantic
-
-- [ ] Module traversal
-- [ ] Identifier linking
-- [ ] Visibility pass
-- [ ] Dead code warnings (if necessary)
-- [ ] Macro expansion (token-level macros pass)
-- [ ] Type check/inference & provider validity checks
-- [ ] Macro expansion (meta-level macros pass)
-- [ ] Closure analysis (capture soundness, cross-closure jump validity and expansion)\
-- [ ] Match exhaustiveness validation
-- [ ] Control flow analysis
-- [ ] Bytecode generation from control flow graph
-
-## Interpreter
-
-- [ ] In-memory representation
-- [ ] (de)Serialization
-- [ ] Object representation
-- [ ] Garbage collector
-- [ ] Interpreter
+- [ ] Define AST
 
 # Feature Wishlist
 

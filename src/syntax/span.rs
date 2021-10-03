@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
 
@@ -38,6 +38,10 @@ impl SourceFile {
             file: self,
             raw: FileLocRaw::HEAD,
         }
+    }
+
+    pub fn path(&self) -> &Path {
+        self.arc.path.as_path()
     }
 }
 
@@ -76,6 +80,18 @@ pub struct AnySpan<F> {
     file: F,
     start: FileLocRaw,
     end: FileLocRaw,
+}
+
+impl<F: Borrow<SourceFile>> Display for AnySpan<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "{}-{}@{:?}",
+            self.start.pos,
+            self.end.pos,
+            self.file.borrow().path()
+        )
+    }
 }
 
 impl Span {
@@ -253,6 +269,12 @@ impl<F: Borrow<SourceFile>> PartialOrd<Self> for AnyFileLoc<F> {
         } else {
             None
         }
+    }
+}
+
+impl<F: Borrow<SourceFile>> Display for AnyFileLoc<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "{}@{:?}", self.raw.pos, self.file.borrow().path())
     }
 }
 
