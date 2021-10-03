@@ -766,7 +766,7 @@ pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
 pub fn group_match_whitespace(reader: &mut FileReader, match_eof: bool) -> bool {
     reader.lookahead(|reader| match reader.consume() {
         ReadAtom::Codepoint(char) => char.is_whitespace(),
-        ReadAtom::Newline { .. } => true,
+        ReadAtom::Newline(_) => true,
         ReadAtom::Unknown(_) => false,
         ReadAtom::Eof => match_eof,
     })
@@ -981,7 +981,7 @@ pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
 pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
     if let Some(char) = reader.lookahead(|reader| match reader.consume() {
         ReadAtom::Codepoint(char) => Some(char),
-        ReadAtom::Newline { .. } => Some('\n'),
+        ReadAtom::Newline(_) => Some('\n'),
         _ => None,
     }) {
         return Some(char);

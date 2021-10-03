@@ -472,11 +472,15 @@ impl<'a> FileReader<'a> {
                     .reader
                     .lookahead(|reader| reader.consume() == Ok(Some('\n')));
 
-                ReadAtom::Newline { valid }
+                ReadAtom::Newline(if valid {
+                    NewlineKind::Crlf
+                } else {
+                    NewlineKind::Malformed
+                })
             }
 
             // Match LF
-            Ok(Some('\n')) => ReadAtom::Newline { valid: true },
+            Ok(Some('\n')) => ReadAtom::Newline(NewlineKind::Lf),
 
             // Match char
             Ok(Some(char)) => ReadAtom::Codepoint(char),
@@ -534,7 +538,7 @@ impl Reader for FileReader<'_> {
             // These will probably show up as illegal character boxes in the editor.
             ReadAtom::Unknown(_) => self.next_pos.col += 1,
             // Newlines, valid or not, are typically treated as newlines by editors.
-            ReadAtom::Newline { .. } => {
+            ReadAtom::Newline(_) => {
                 self.next_pos.line += 1;
                 self.next_pos.col = 0;
             }
@@ -608,7 +612,7 @@ pub enum ReadAtom {
     /// Anything that most editors will typically treat as newlines. These may or may not be
     /// properly formed. These will all be transformed into a "safer" `\n` representation before
     /// being displayed.
-    Newline { valid: bool },
+    Newline(NewlineKind),
 
     /// The end of a file.
     Eof,
@@ -620,20 +624,17 @@ impl ReadAtom {
     /// Returns whether this atom is well formed.
     pub fn is_well_formed(self) -> bool {
         match self {
-            // Valid atoms
             Self::Codepoint(_) => true,
-            Self::Newline { valid: true } => true,
             Self::Eof => true,
-            // Invalid atoms
+            Self::Newline(kind) => kind.is_well_formed(),
             Self::Unknown(_) => false,
-            Self::Newline { valid: false } => false,
         }
     }
 
     /// Returns whether this atom is treated as a newline by most code editors.
     pub fn is_newline_like(self) -> bool {
         match self {
-            ReadAtom::Newline { .. } => true,
+            ReadAtom::Newline(_) => true,
             _ => false,
         }
     }
@@ -646,7 +647,7 @@ impl ReadAtom {
         match self {
             // Valid patterns
             Self::Codepoint(char) => CharOrEof::Char(char),
-            Self::Newline { .. } => CharOrEof::Char('\n'),
+            Self::Newline(_) => CharOrEof::Char('\n'),
             Self::Eof => CharOrEof::Eof,
 
             // Invalid patterns
@@ -660,6 +661,23 @@ impl ReadAtom {
     /// The EOF is transformed into the nul character (`\0`).
     pub fn as_char(self) -> char {
         self.as_char_or_eof().nul_eof()
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum NewlineKind {
+    Lf,
+    Crlf,
+    Malformed,
+}
+
+impl NewlineKind {
+    pub fn is_well_formed(self) -> bool {
+        match self {
+            NewlineKind::Lf => true,
+            NewlineKind::Crlf => true,
+            NewlineKind::Malformed => false,
+        }
     }
 }
 
