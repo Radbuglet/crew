@@ -1,5 +1,25 @@
 # To-Do
 
+## Documentation
+
+- [ ] Class system
+- [ ] Ownership model and GC references
+- [ ] Syntax
+- [ ] Improved README
+
+## Infrastructure
+
+- [x] Trace logging
+- [x] Allocation mechanisms:
+  - [x] ~~Arena allocator with replacement mechanisms~~ (bumpalo is sufficiently powerful for this project)
+  - [ ] Bump data structures
+  - [ ] Builders
+  - [ ] Interner
+- [ ] Diagnostic system
+- [ ] Better backing system
+- [ ] Task system
+- [ ] Crash reporter
+
 ## Tokenizer
 
 - [x] Implement public tokenizer IR interface
@@ -12,26 +32,22 @@
   - [ ] Custom delimiters
 - [ ] Finish numeric literal parsing (how do we handle property accesses and ranges)
 - [ ] Preserve doc and delimiter comments
+- [ ] Preserve insignificant characters (e.g. whitespace, comments) for formatting.
 - [ ] Revisit handling of invalid newlines/characters
 - [ ] Reconsider character groups
 - [ ] Implement error recovery system
 - [ ] Test suite
 
-## Infrastructure
-
-- [x] Trace logging
-- [ ] Implement page-based interner
-- [ ] Generic copy-on-write system
-- [ ] Diagnostic system
-- [ ] Better backing system
-- [ ] Task system
-- [ ] Crash reporter
-
 ## Parser
 
+- [ ] Define keywords (used for scope parsing)
+- [ ] Generic operator stream to AST conversion
 - [ ] Create reader
-- [ ] Create parsing traits (similar to `syn`)
-- [ ] Define AST
+- [ ] Define expressions and their parsing
+- [ ] Define scopes and their parsing
+- [ ] Define modules and their parsing
+- [ ] Implement diagnostic and error recovery system
+- [ ] Test suite
 
 # Feature Wishlist
 
@@ -39,15 +55,14 @@
 - [x] Nested comments
 - [ ] `//>` region comments
 - [ ] Doc comments
-- [ ] `out` and `ref` parameters
 - [ ] Unified enum and type matching system through `is`
 - [ ] Linking `in` at runtime if they are statically unbound (should allow late binding with checks)
-- [ ] Allow users to specify the scope of who can specify inputs.
+- [ ] Allow users to limit the visibility of `in` items.
 - [ ] `in out` linking inference
-- [ ] Try unwrap (`?`) syntax
+- [ ] Error propagation syntax (`?`)
 - [ ] `return` to named block
 - [ ] `break`/`continue`/`return` within specific closures that support it (done by propagating a `ControlFlow<T, L>` result object)
-- [ ] Explicit inlining by qualifying variables with `~`
+- [ ] Implement ownership system where users can move or copy objects. Implement a garbage-collected reference type.
 - [ ] Combine Java-style enum metadata with Rust-style sum type enums
 - [ ] Actual `statics`
 - [ ] Programmatic `TokenStream` macros (support macros by example?).
@@ -62,4 +77,4 @@
 - [ ] Programmatic dynamic exposition (`IDynamicObject` interface)
 - [ ] Allow users to dynamically specify input fields (as either values or property getters) and methods (as closures).
 - [ ] Unified `async` and iterator handling through coroutines.
-- [ ] No required runtime, allow host to decide which function is the entry point.
+- [ ] Embedding API
