@@ -1,19 +1,11 @@
 # To-Do
 
-## Documentation
-
-- [ ] Class system
-- [ ] Ownership model and GC references
-- [ ] Syntax
-- [ ] Improved README
-
 ## Infrastructure
 
 - [x] Trace logging
-- [x] Allocation mechanisms:
-  - [x] ~~Arena allocator with replacement mechanisms~~ (bumpalo is sufficiently powerful for this project)
-  - [ ] Bump data structures
-  - [ ] Builders
+- [ ] Tree storage mechanisms:
+  - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
+  - [ ] Fork allocation primitives
   - [ ] Interner
 - [ ] Diagnostic system
 - [ ] Better backing system
@@ -40,7 +32,6 @@
 
 ## Parser
 
-- [ ] Define keywords (used for scope parsing)
 - [ ] Generic operator stream to AST conversion
 - [ ] Create reader
 - [ ] Define expressions and their parsing
@@ -57,12 +48,12 @@
 - [ ] Doc comments
 - [ ] Unified enum and type matching system through `is`
 - [ ] Linking `in` at runtime if they are statically unbound (should allow late binding with checks)
-- [ ] Allow users to limit the visibility of `in` items.
+- [ ] Allow users to specify the scope of who can provide values for a given `in`.
 - [ ] `in out` linking inference
-- [ ] Error propagation syntax (`?`)
+- [ ] Error propagation (`?`) syntax with implicit conversion
 - [ ] `return` to named block
 - [ ] `break`/`continue`/`return` within specific closures that support it (done by propagating a `ControlFlow<T, L>` result object)
-- [ ] Implement ownership system where users can move or copy objects. Implement a garbage-collected reference type.
+- [ ] Make garbage collected pointer types (ideally handled in userland with GC alloc intrinsics), implement move/clone semantics for owned values.
 - [ ] Combine Java-style enum metadata with Rust-style sum type enums
 - [ ] Actual `statics`
 - [ ] Programmatic `TokenStream` macros (support macros by example?).
@@ -77,4 +68,4 @@
 - [ ] Programmatic dynamic exposition (`IDynamicObject` interface)
 - [ ] Allow users to dynamically specify input fields (as either values or property getters) and methods (as closures).
 - [ ] Unified `async` and iterator handling through coroutines.
-- [ ] Embedding API
+- [ ] No required runtime, allow host to decide which function is the entry point.

@@ -102,7 +102,7 @@ pub macro enum_meta($(
     }
 )*}
 
-// === Serialization === //
+// === Discriminant conversion === //
 
 pub trait EnumDiscriminant {
     type Discriminant;

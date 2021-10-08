@@ -31,7 +31,6 @@ use crate::syntax::span::{
     AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Reader, Span, SpanRef,
 };
 use crate::util::enum_meta::{enum_meta, EnumMeta};
-use crate::util::intern::{Intern, InternBuilder, Interner};
 use smallvec::SmallVec;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
@@ -45,7 +44,6 @@ pub trait AnyToken: Display {
 
 #[derive(Debug, Default, Clone)]
 pub struct TokenStream {
-    // TODO: Make COW system more generic
     tokens: Arc<Vec<Token>>,
 }
 
@@ -153,7 +151,7 @@ impl Into<Token> for TokenGroup {
 #[derive(Debug, Clone)]
 pub struct TokenIdent {
     pub span: Span,
-    pub text: Intern,
+    pub text: String,
 }
 
 impl AnyToken for TokenIdent {
@@ -190,7 +188,6 @@ impl Into<Token> for TokenPunct {
 pub struct TokenStringLit {
     pub span: Span,
     pub mode: StringMode,
-    // TODO: Move to a COW
     pub parts: SmallVec<[StringComponent; 1]>,
 }
 
@@ -209,15 +206,15 @@ impl Into<Token> for TokenStringLit {
 #[derive(Debug, Clone)]
 pub enum StringComponent {
     Template(TokenGroup),
-    Literal(Intern),
+    Literal(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct TokenNumberLit {
     pub span: Span,
     pub prefix: NumberPrefix,
-    pub int_part: Intern,
-    pub float_part: Option<Intern>,
+    pub int_part: String,
+    pub float_part: Option<String>,
 }
 
 impl AnyToken for TokenNumberLit {
@@ -443,7 +440,7 @@ impl Into<StackFrame> for TokenStringLit {
 
 // === Tokenizing === //
 
-pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: &R) -> TokenGroup {
+pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
     let mut reader = source.reader();
 
     // Consume any shebang at the beginning of the file.
@@ -527,7 +524,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 }
 
                 // Match identifier
-                if let Some(ident) = group_match_ident(&mut reader, interner) {
+                if let Some(ident) = group_match_ident(&mut reader) {
                     group.tokens_mut().push(Token::Ident(ident));
                     continue;
                 }
@@ -539,8 +536,8 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 }
 
                 // Match number literal
-                if let Some(num) = group_match_number_lit(&mut reader, interner) {
-                    if group_match_ident(&mut reader.clone(), interner).is_some() {
+                if let Some(num) = group_match_number_lit(&mut reader) {
+                    if group_match_ident(&mut reader.clone()).is_some() {
                         panic!("Unexpected digit at {}", reader.next_loc().pos());
                     }
 
@@ -554,7 +551,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                 );
             }
             StackFrame::String(string) => {
-                let mut intern = interner.begin_intern();
+                let mut text = String::new();
                 loop {
                     // Match EOF
                     if reader.peek() == ReadAtom::Eof {
@@ -574,14 +571,14 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     // We match escape sequences before any special delimiter characters because the
                     // escape might be for a delimiter.
                     if let Some(char) = string_match_escape(&mut reader) {
-                        intern.push(char);
+                        text.push(char);
                         continue;
                     }
 
                     // Match closing quote
                     if string_match_end(&mut reader) {
-                        if !intern.is_empty() {
-                            string.parts.push(StringComponent::Literal(intern.build()));
+                        if !text.is_empty() {
+                            string.parts.push(StringComponent::Literal(text));
                         }
 
                         let string = match stack.pop() {
@@ -605,8 +602,8 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
                     if string.mode == StringMode::Templated
                         && string_match_placeholder_start(&mut reader)
                     {
-                        if !intern.is_empty() {
-                            string.parts.push(StringComponent::Literal(intern.build()));
+                        if !text.is_empty() {
+                            string.parts.push(StringComponent::Literal(text));
                         }
 
                         stack.push(
@@ -622,7 +619,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(interner: &mut Interner, source: 
 
                     // Match character
                     if let Some(char) = string_match_char(&mut reader) {
-                        intern.push(char);
+                        text.push(char);
                         continue;
                     }
 
@@ -702,16 +699,16 @@ pub fn group_match_delimiter(reader: &mut FileReader) -> Option<(GroupDelimiter,
 }
 
 /// Matches and consumes a [TokenIdent] that is at least one character long. Does not match a plain EOF.
-pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Option<TokenIdent> {
+pub fn group_match_ident(reader: &mut FileReader) -> Option<TokenIdent> {
     reader.lookahead(|reader| {
-        let mut intern = interner.begin_intern();
+        let mut text = String::new();
         let start = reader.next_loc();
 
         // Match identifier start
         if !reader.lookahead(|reader| {
             let char = reader.consume().as_char();
             if char.is_alphabetic() || char == '_' {
-                intern.push(char);
+                text.push(char);
                 true
             } else {
                 false
@@ -724,7 +721,7 @@ pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Op
         reader.consume_while(|reader| {
             let char = reader.consume().as_char();
             if char.is_alphanumeric() || char == '_' {
-                intern.push(char);
+                text.push(char);
                 true
             } else {
                 false
@@ -734,7 +731,7 @@ pub fn group_match_ident(reader: &mut FileReader, interner: &mut Interner) -> Op
         // Build identifier
         Some(TokenIdent {
             span: Span::new(&start, &reader.prev_loc()),
-            text: intern.build(),
+            text,
         })
     })
 }
@@ -833,24 +830,23 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
 ///
 /// See [NumberPrefix] for more information about prefixes.
 ///
-pub fn group_match_number_lit(
-    reader: &mut FileReader,
-    interner: &mut Interner,
-) -> Option<TokenNumberLit> {
-    fn read_digits(reader: &mut FileReader, intern: &mut InternBuilder<'_>, digits: &str) {
+pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit> {
+    fn read_digits(reader: &mut FileReader, digits: &str) -> String {
         fn alphabet_contains(alphabet: &str, char: char) -> bool {
             let char = char.to_ascii_lowercase();
             alphabet.chars().any(|allowed| allowed == char)
         }
 
+        let mut text = String::new();
         reader.consume_while(|reader| match reader.consume() {
             ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
-                intern.push(char.to_ascii_lowercase());
+                text.push(char.to_ascii_lowercase());
                 true
             }
             ReadAtom::Codepoint('_') => true,
             _ => false,
         });
+        text
     }
 
     reader.lookahead(|reader| {
@@ -878,17 +874,15 @@ pub fn group_match_number_lit(
 
         // Read integer-part digits
         let int_part = {
-            let mut builder = interner.begin_intern();
-            read_digits(reader, &mut builder, prefix.meta().digits);
-
-            if builder.is_empty() {
+            let text = read_digits(reader, prefix.meta().digits);
+            if text.is_empty() {
                 if prefix == NumberPrefix::Decimal {
                     return None;
                 } else {
                     panic!("Expected digits after prefix at {}!", start.pos());
                 }
             }
-            builder.build()
+            text
         };
 
         // Read floating-part digits
@@ -904,9 +898,7 @@ pub fn group_match_number_lit(
                     );
                 }
 
-                let mut builder = interner.begin_intern();
-                read_digits(reader, &mut builder, &NumberPrefix::Decimal.meta().digits);
-                Some(builder.build())
+                Some(read_digits(reader, &NumberPrefix::Decimal.meta().digits))
             } else {
                 None
             }
