@@ -3,7 +3,7 @@
 ## Infrastructure
 
 - [x] Trace logging
-- [ ] Tree storage mechanisms:
+- [ ] Efficient storage mechanisms:
   - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
   - [ ] Fork allocation primitives
   - [ ] Interner
@@ -32,9 +32,10 @@
 
 ## Parser
 
-- [ ] Generic operator stream to AST conversion
-- [ ] Create reader
-- [ ] Define expressions and their parsing
+- [x] Create reader
+- [ ] Create in-place array folding mechanisms
+- [ ] Define expression AST
+- [ ] Implement expression parsing
 - [ ] Define scopes and their parsing
 - [ ] Define modules and their parsing
 - [ ] Implement diagnostic and error recovery system

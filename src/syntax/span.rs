@@ -1,3 +1,4 @@
+use crate::util::reader::LookaheadReader;
 use core::str::next_code_point;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -342,106 +343,57 @@ impl PartialOrd for FilePos {
     }
 }
 
-// === Reader === //
-
-pub trait Reader: Clone {
-    type Output;
-
-    fn consume(&mut self) -> Self::Output;
-
-    fn peek(&self) -> Self::Output {
-        self.clone().consume()
-    }
-
-    /// Attempts to match the reader sequence using the handler, committing the state if the return
-    /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
-    /// ignoring all reader state changes otherwise.
-    fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
-    where
-        F: FnOnce(&mut Self) -> R,
-        R: LookaheadResult,
-    {
-        let mut lookahead = self.clone();
-        let res = handler(&mut lookahead);
-        if res.is_truthy() {
-            *self = lookahead;
-        }
-        res.into_result()
-    }
-
-    fn peek_ahead<F, R>(&self, handler: F) -> R::Ret
-    where
-        F: FnOnce(&mut Self) -> R,
-        R: LookaheadResult,
-    {
-        handler(&mut self.clone()).into_result()
-    }
-
-    fn consume_while<F>(&mut self, mut handler: F)
-    where
-        F: FnMut(&mut Self) -> bool,
-    {
-        while self.lookahead(&mut handler) {}
-    }
-}
-
-pub trait LookaheadResult {
-    type Ret;
-
-    fn is_truthy(&self) -> bool;
-    fn into_result(self) -> Self::Ret;
-}
-
-impl LookaheadResult for bool {
-    type Ret = Self;
-
-    fn is_truthy(&self) -> bool {
-        *self
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self
-    }
-}
-
-impl<T> LookaheadResult for Option<T> {
-    type Ret = Self;
-
-    fn is_truthy(&self) -> bool {
-        self.is_some()
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self
-    }
-}
-
-impl<T, E> LookaheadResult for Result<T, E> {
-    type Ret = Self;
-
-    fn is_truthy(&self) -> bool {
-        self.is_ok()
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self
-    }
-}
-
-impl<T> LookaheadResult for (bool, T) {
-    type Ret = T;
-
-    fn is_truthy(&self) -> bool {
-        self.0
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self.1
-    }
-}
+// === Readers === //
 
 pub trait AsFileReader {
     fn reader(&self) -> FileReader;
+}
+
+#[derive(Clone)]
+struct CharReader<'a> {
+    source: &'a [u8],
+    index: usize,
+}
+
+impl<'a> CharReader<'a> {
+    pub fn new(source: &'a [u8], index: usize) -> Self {
+        Self { source, index }
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
+        let mut stream = self.source.iter();
+
+        // Consume char
+        let start = stream.len();
+        let code = next_code_point(&mut stream);
+
+        // Decode char
+        let char = match code {
+            Some(code) => Some(char::from_u32(code).ok_or(CharReadErr::BadUnicode(code))?),
+            None => None,
+        };
+
+        // Update stream
+        self.source = stream.as_slice();
+        self.index += start - stream.len();
+
+        Ok(char)
+    }
+
+    pub fn peek(&self) -> Result<Option<char>, CharReadErr> {
+        self.clone().consume()
+    }
+}
+
+impl LookaheadReader for CharReader<'_> {}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+enum CharReadErr {
+    BadUnicode(u32),
 }
 
 #[derive(Clone)]
@@ -518,12 +470,8 @@ impl<'a> FileReader<'a> {
     pub fn file(&self) -> &'a SourceFile {
         self.file
     }
-}
 
-impl Reader for FileReader<'_> {
-    type Output = ReadAtom;
-
-    fn consume(&mut self) -> Self::Output {
+    pub fn consume(&mut self) -> ReadAtom {
         // Save previous state
         self.prev_pos = self.next_pos;
         self.prev_idx = self.reader.index();
@@ -548,55 +496,12 @@ impl Reader for FileReader<'_> {
         result
     }
 
-    fn peek(&self) -> Self::Output {
+    pub fn peek(&self) -> ReadAtom {
         self.clone().consume_untracked()
     }
 }
 
-#[derive(Clone)]
-struct CharReader<'a> {
-    source: &'a [u8],
-    index: usize,
-}
-
-impl<'a> CharReader<'a> {
-    pub fn new(source: &'a [u8], index: usize) -> Self {
-        Self { source, index }
-    }
-
-    pub fn index(&self) -> usize {
-        self.index
-    }
-}
-
-impl Reader for CharReader<'_> {
-    type Output = Result<Option<char>, CharReadErr>;
-
-    fn consume(&mut self) -> Self::Output {
-        let mut stream = self.source.iter();
-
-        // Consume char
-        let start = stream.len();
-        let code = next_code_point(&mut stream);
-
-        // Decode char
-        let char = match code {
-            Some(code) => Some(char::from_u32(code).ok_or(CharReadErr::BadUnicode(code))?),
-            None => None,
-        };
-
-        // Update stream
-        self.source = stream.as_slice();
-        self.index += start - stream.len();
-
-        Ok(char)
-    }
-}
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-enum CharReadErr {
-    BadUnicode(u32),
-}
+impl LookaheadReader for FileReader<'_> {}
 
 /// An abstraction over unicode that represents an indivisible unit of text. Characters are
 /// categorized by how they are typically handled by code editors.

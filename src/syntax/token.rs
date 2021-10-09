@@ -28,10 +28,10 @@
 //! given the specific context of the main [tokenize_file] routine.
 
 use crate::syntax::span::{
-    AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Reader, Span, SpanRef,
+    AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
 };
 use crate::util::enum_meta::{enum_meta, EnumMeta};
-use smallvec::SmallVec;
+use crate::util::reader::LookaheadReader;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -169,6 +169,7 @@ impl Into<Token> for TokenIdent {
 #[derive(Debug, Clone)]
 pub struct TokenPunct {
     pub loc: FileLoc,
+    pub is_glued: bool,
     pub punct: PunctChar,
 }
 
@@ -188,7 +189,7 @@ impl Into<Token> for TokenPunct {
 pub struct TokenStringLit {
     pub span: Span,
     pub mode: StringMode,
-    pub parts: SmallVec<[StringComponent; 1]>,
+    pub parts: Vec<StringComponent>,
 }
 
 impl AnyToken for TokenStringLit {
@@ -530,9 +531,16 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                 }
 
                 // Match punctuation
-                if let Some(punct) = group_match_punct(&mut reader) {
-                    group.tokens_mut().push(Token::Punct(punct));
-                    continue;
+                {
+                    let glued_punct = match group.tokens().last() {
+                        Some(Token::Punct(_)) => true,
+                        _ => false,
+                    };
+
+                    if let Some(punct) = group_match_punct(&mut reader, glued_punct) {
+                        group.tokens_mut().push(Token::Punct(punct));
+                        continue;
+                    }
                 }
 
                 // Match number literal
@@ -737,7 +745,7 @@ pub fn group_match_ident(reader: &mut FileReader) -> Option<TokenIdent> {
 }
 
 /// Matches and consumes a single [TokenPunct]. Does not match a plain EOF.
-pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
+pub fn group_match_punct(reader: &mut FileReader, is_glued: bool) -> Option<TokenPunct> {
     reader.lookahead(|reader| {
         let start = reader.next_loc();
         let read = match reader.consume() {
@@ -749,6 +757,7 @@ pub fn group_match_punct(reader: &mut FileReader) -> Option<TokenPunct> {
             if read == *char {
                 Some(TokenPunct {
                     loc: start.as_owned(),
+                    is_glued,
                     punct,
                 })
             } else {
@@ -807,7 +816,7 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
         mode.map(|mode| TokenStringLit {
             span: Span::new(&start, &reader.next_loc()),
             mode,
-            parts: SmallVec::new(),
+            parts: Vec::new(),
         })
     })
 }
