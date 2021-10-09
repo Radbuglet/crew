@@ -3,14 +3,15 @@
 ## Infrastructure
 
 - [x] Trace logging
-- [ ] Efficient storage mechanisms:
+- [ ] Efficient data structures:
   - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
   - [ ] Fork allocation primitives
   - [ ] Interner
+  - [ ] Better backing system
+  - [ ] Macro to automate object enum generation
 - [ ] Diagnostic system
-- [ ] Better backing system
-- [ ] Task system
 - [ ] Crash reporter
+- [ ] Task system
 
 ## Tokenizer
 
@@ -33,7 +34,10 @@
 ## Parser
 
 - [x] Create reader
-- [ ] Create in-place array folding mechanisms
+- [ ] Create in-place array folding mechanisms:
+  - [ ] Advanced readers
+  - [ ] Left folder
+  - [ ] Convenience methods
 - [ ] Define expression AST
 - [ ] Implement expression parsing
 - [ ] Define scopes and their parsing
@@ -54,7 +58,9 @@
 - [ ] Error propagation (`?`) syntax with implicit conversion
 - [ ] `return` to named block
 - [ ] `break`/`continue`/`return` within specific closures that support it (done by propagating a `ControlFlow<T, L>` result object)
-- [ ] Make garbage collected pointer types (ideally handled in userland with GC alloc intrinsics), implement move/clone semantics for owned values.
+- [ ] Implement move/clone semantics for classes and allow them to handle destruction.
+- [ ] Implement `RCs` which take ownership of these classes.
+- [ ] Implement garbage collected pointers which take ownership of these classes.
 - [ ] Combine Java-style enum metadata with Rust-style sum type enums
 - [ ] Actual `statics`
 - [ ] Programmatic `TokenStream` macros (support macros by example?).

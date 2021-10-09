@@ -2,9 +2,11 @@
 #![feature(allocator_api)]
 #![feature(coerce_unsized)]
 #![feature(decl_macro)]
+#![feature(maybe_uninit_array_assume_init)]
+#![feature(maybe_uninit_extra)]
+#![feature(maybe_uninit_uninit_array)]
 #![feature(str_internals)]
 #![feature(unsize)]
-#![feature(maybe_uninit_uninit_array)]
 
 use crate::syntax::span::SourceFile;
 use crate::syntax::token::tokenize_file;
