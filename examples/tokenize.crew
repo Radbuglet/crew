@@ -20,10 +20,10 @@ pub class IMyOtherInterface {
 fn test<A: IMyInterface>(a: u32, b: u32, c: A::TypeAlias) -> A {
 	val my_var = Box::new((a + b) as f32 + 0000234__245.2_2__5783);
 	print($"The result of {a} + {b} is {{
-	    fn test() {
+		fn test() {
 			my_var += 1.;
-	    }
-	    a + b
+		}
+		a + b
 	}}");
 
 	match my_var {
@@ -34,7 +34,7 @@ fn test<A: IMyInterface>(a: u32, b: u32, c: A::TypeAlias) -> A {
 	val _ünicodé_suppõrt = $"Héllo! {áll}";
 	val multiline = "m\
 	\0\t\
-	        no indent
+			no indent
 	has indent";
 
 	c.produce()
