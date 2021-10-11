@@ -2,6 +2,7 @@
 #![feature(allocator_api)]
 #![feature(coerce_unsized)]
 #![feature(decl_macro)]
+#![feature(generic_associated_types)]
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(maybe_uninit_extra)]
 #![feature(maybe_uninit_uninit_array)]

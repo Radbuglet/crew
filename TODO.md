@@ -35,9 +35,9 @@
 
 - [x] Create reader
 - [ ] Create in-place array folding mechanisms:
-  - [ ] Advanced readers
+  - [x] Advanced readers
+  - [x] Convenience methods
   - [ ] Left folder
-  - [ ] Convenience methods
 - [ ] Define expression AST
 - [ ] Implement expression parsing
 - [ ] Define scopes and their parsing

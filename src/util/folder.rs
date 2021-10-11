@@ -1,11 +1,17 @@
-// === Generic === //
+// TODO: Code review
 
+use crate::util::reader::SliceMutReader;
 use crate::util::slice_ext::ArrayCollectExt;
 use std::mem::{transmute, MaybeUninit};
+
+// === Generic mechanisms === //
 
 /// Folders a very useful reader-like construct which allow users to procedurally move through an
 /// array from either left-to-right ([RightFolder]) or right-to-left ([LeftFolder]) to accept, replace,
 /// and skip elements from the array to reduce it.
+///
+/// This trait is object-safe, with all of the non-object-safe methods being derived in the [FolderExt]
+/// extension trait.
 pub trait Folder {
     type Item;
 
@@ -21,14 +27,18 @@ pub trait Folder {
         self.remaining() == 0
     }
 
-    fn split(&mut self) -> (&mut [Self::Item], &mut [Self::Item]);
+    fn preceding(&self) -> &[Self::Item];
 
-    fn preceding(&mut self) -> &mut [Self::Item] {
-        self.split().0
+    fn proceeding(&self) -> &[Self::Item];
+
+    fn split_mut(&mut self) -> (&mut [Self::Item], &mut [Self::Item]);
+
+    fn preceding_mut(&mut self) -> &mut [Self::Item] {
+        self.split_mut().0
     }
 
-    fn proceeding(&mut self) -> &mut [Self::Item] {
-        self.split().1
+    fn proceeding_mut(&mut self) -> &mut [Self::Item] {
+        self.split_mut().1
     }
 
     // === Primitive list modification === //
@@ -49,10 +59,6 @@ pub trait Folder {
 
     fn take(&mut self) -> Self::Item;
 
-    fn take_many(&mut self, count: usize) -> FolderOmitDrain<'_, Self> {
-        FolderOmitDrain::new(self, count)
-    }
-
     // === Higher-order list modification === //
 
     fn produce(&mut self, count: usize, value: Self::Item) {
@@ -63,17 +69,39 @@ pub trait Folder {
     fn reduce(&mut self, count: usize, value: Self::Item) {
         debug_assert!(self.remaining() >= count);
 
-        self.proceeding()[count - 1] = value;
+        self.proceeding_mut()[count - 1] = value;
         self.omit_many(count - 1);
     }
 }
 
-pub struct FolderOmitDrain<'a, T: ?Sized> {
+pub trait FolderExt: Folder {
+    fn take_many(&mut self, count: usize) -> FolderOmitDrain<'_, Self> {
+        FolderOmitDrain::new(self, count)
+    }
+
+    fn reduce_fn<F>(&mut self, mut handler: F) -> bool
+    where
+        F: FnMut(&mut SliceMutReader<'_, Self::Item>) -> Option<Self::Item>,
+    {
+        let mut reader = SliceMutReader::new(self.proceeding_mut());
+        if let Some(replace) = handler(&mut reader) {
+            let read = reader.consumed();
+            self.reduce(read, replace);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl<F: ?Sized + Folder> FolderExt for F {}
+
+pub struct FolderOmitDrain<'a, T: ?Sized + Folder> {
     target: &'a mut T,
     remaining: usize,
 }
 
-impl<'a, T: ?Sized> FolderOmitDrain<'a, T> {
+impl<'a, T: ?Sized + Folder> FolderOmitDrain<'a, T> {
     pub fn new(target: &'a mut T, count: usize) -> Self {
         Self {
             target,
@@ -100,6 +128,12 @@ impl<T: ?Sized + Folder> Iterator for FolderOmitDrain<'_, T> {
 }
 
 impl<T: ?Sized + Folder> ExactSizeIterator for FolderOmitDrain<'_, T> {}
+
+impl<T: ?Sized + Folder> Drop for FolderOmitDrain<'_, T> {
+    fn drop(&mut self) {
+        self.target.omit_many(self.remaining);
+    }
+}
 
 // === Primitive folders === //
 
@@ -131,7 +165,6 @@ pub struct RightFolder<'a, T> {
 impl<'a, T> RightFolder<'a, T> {
     pub fn new(target: &'a mut Vec<T>) -> Self {
         Self {
-            // FIXME: Is this actually legal?
             target: unsafe { transmute::<&'a mut Vec<T>, &'a mut Vec<MaybeUninit<T>>>(target) },
             write_index: 0,
             read_index: 0,
@@ -146,7 +179,23 @@ impl<T> Folder for RightFolder<'_, T> {
         self.target.len() - self.read_index
     }
 
-    fn split<'a>(&'a mut self) -> (&'a mut [Self::Item], &'a mut [Self::Item]) {
+    fn preceding<'a>(&'a self) -> &'a [Self::Item] {
+        unsafe {
+            transmute::<&'a [MaybeUninit<Self::Item>], &'a [Self::Item]>(
+                &self.target[..self.write_index],
+            )
+        }
+    }
+
+    fn proceeding<'a>(&'a self) -> &'a [Self::Item] {
+        unsafe {
+            transmute::<&'a [MaybeUninit<Self::Item>], &'a [Self::Item]>(
+                &self.target[self.read_index..],
+            )
+        }
+    }
+
+    fn split_mut<'a>(&'a mut self) -> (&'a mut [Self::Item], &'a mut [Self::Item]) {
         // Split vector
         // TODO: Implement n-splitting generically
         let (committed, right) = self.target.split_at_mut(self.write_index);
@@ -214,7 +263,7 @@ impl<T> Drop for RightFolder<'_, T> {
 }
 
 #[test]
-fn fold_right_test() {
+fn fold_right_primitive_test() {
     let mut target = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
     let mut folder = RightFolder::new(&mut target);

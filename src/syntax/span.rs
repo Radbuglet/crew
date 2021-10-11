@@ -389,7 +389,27 @@ impl<'a> CharReader<'a> {
     }
 }
 
-impl LookaheadReader for CharReader<'_> {}
+impl LookaheadReader for CharReader<'_> {
+    type Decomposed = Self;
+    #[rustfmt::skip]
+    type AsFork<'a> where Self: 'a = Self;
+
+    fn fork(&mut self) -> Self::AsFork<'_> {
+        self.clone()
+    }
+
+    fn decompose_fork<'a>(fork: Self::AsFork<'a>) -> Self::Decomposed
+    where
+        Self: 'a,
+    {
+        fork
+    }
+
+    fn commit_fork(&mut self, state: Self::Decomposed) {
+        debug_assert_eq!(self.source as *const _, state.source as *const _);
+        *self = state;
+    }
+}
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 enum CharReadErr {
@@ -501,7 +521,27 @@ impl<'a> FileReader<'a> {
     }
 }
 
-impl LookaheadReader for FileReader<'_> {}
+impl LookaheadReader for FileReader<'_> {
+    type Decomposed = Self;
+    #[rustfmt::skip]
+    type AsFork<'a> where Self: 'a = Self;
+
+    fn fork(&mut self) -> Self::AsFork<'_> {
+        self.clone()
+    }
+
+    fn decompose_fork<'a>(fork: Self::AsFork<'a>) -> Self::Decomposed
+    where
+        Self: 'a,
+    {
+        fork
+    }
+
+    fn commit_fork(&mut self, state: Self::Decomposed) {
+        debug_assert_eq!(&self.file, &state.file);
+        *self = state;
+    }
+}
 
 /// An abstraction over unicode that represents an indivisible unit of text. Characters are
 /// categorized by how they are typically handled by code editors.
