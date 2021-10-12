@@ -8,7 +8,7 @@
   - [ ] Fork allocation primitives
   - [ ] Interner
   - [ ] Better backing system
-  - [ ] Macro to automate object enum generation
+  - [ ] Macro to automate object category generation
 - [ ] Diagnostic system
 - [ ] Crash reporter
 - [ ] Task system

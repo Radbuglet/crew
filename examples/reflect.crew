@@ -1,0 +1,78 @@
+//! An example of reflection in Crew.
+
+//> ...somewhere off in "core".
+
+pub mod reflect {
+	@LangItem(core::reflect::IDynamicResolver)
+	pub class IDynamicResolver {
+	    @LangItem(core::reflect::IDynamicResolver)
+		pub in fn resolveComponent<T>(ty: Type<T>) -> T*?;
+	}
+
+	@LangItem(reflect::Type)
+	pub class Type {
+		in type Obj;
+
+		pub out val raw: TypeRaw;
+
+		pub fn new() -> Self {
+			Self {
+				raw: TypeRaw::of::<Obj>(),
+			}
+		}
+	}
+
+	@LangItem(core::reflect::TypeRaw)
+	pub class TypeRaw {
+		// N.B. "in" in front of lang items does not actually declare the item as
+		// an input because "LangItem" will replace item's semantics before any
+		// actual type checking is performed. "in" is purely for the parser's
+		// sake.
+
+		@LangItem(reflection::TypeRaw::of)
+		pub in fn of<T>();
+
+		@LangItem(reflection::TypeRaw::getName)
+		pub in fn getName() -> StrSlice;
+
+		...
+
+		out val display: IDisplay impl {
+			fn toString() -> StrSlice {
+				self.getName()
+			}
+		}
+	}
+}
+
+//> Example implementation of a "DynamicObject".
+
+use reflection::*;
+
+pub class DynamicObject {
+	val comps: HashMap<RawType, T*>;
+
+	pub static fn new() -> Self {
+		Self {
+			comps: HashMap::new(),
+		}
+	}
+
+	fn registerRaw(ty: TypeRaw, obj: T*) {
+		assert(self.comps.add(ty, obj), $"Conflicting implementations of {ty}");
+	}
+
+	pub fn add<T>(obj: T*) {
+		val ty = TypeRaw::of::<T>();
+		self.registerRaw(ty, obj);
+		for exposed in ty.getExposedDeep() {
+			self.registerRaw(exposed, obj);
+		}
+	}
+
+	out(dynamic) val _: IDynamicResolver impl {
+		fn resolveComponent<T>(ty: Type<T>) -> T*? {
+			self.comps.get(&ty)
+		}
+	}
+}

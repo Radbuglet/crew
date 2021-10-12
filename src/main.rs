@@ -2,7 +2,6 @@
 #![feature(allocator_api)]
 #![feature(coerce_unsized)]
 #![feature(decl_macro)]
-#![feature(generic_associated_types)]
 #![feature(maybe_uninit_array_assume_init)]
 #![feature(maybe_uninit_extra)]
 #![feature(maybe_uninit_uninit_array)]
@@ -19,7 +18,7 @@ pub mod util;
 fn main() {
     env_logger::init();
 
-    let source = SourceFile::from_file(PathBuf::from("examples/tokenize.crew")).unwrap();
+    let source = SourceFile::from_file(PathBuf::from("examples/reflect.crew")).unwrap();
     let tokens = tokenize_file(&source);
     println!("Tokenized source: {}", tokens);
 }
