@@ -1,10 +1,9 @@
 use std::hash::Hash;
 use std::slice::Iter as SliceIter;
 
-// === Core === //
+// === Enum Metadata === //
 
 pub trait EnumMeta: 'static + Sized + Copy + Eq + Hash {
-    // TODO: Expand to support non-copy enums
     type Meta: 'static;
 
     fn values() -> &'static [(Self, Self::Meta)];
@@ -101,8 +100,6 @@ pub macro enum_meta($(
         }
     }
 )*}
-
-// === Discriminant conversion === //
 
 pub trait EnumDiscriminant {
     type Discriminant;

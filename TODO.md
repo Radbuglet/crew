@@ -8,7 +8,13 @@
   - [ ] Fork allocation primitives
   - [ ] Interner
   - [ ] Better backing system
-  - [ ] Macro to automate object category generation
+- [ ] Macro to automate object category generation:
+  - [ ] Optionally nested construction
+  - [ ] Optionally nested casting
+- [ ] Create in-place array folding mechanisms:
+  - [x] Base interface
+  - [ ] Generic reader mechanisms
+  - [ ] Left folder
 - [ ] Diagnostic system
 - [ ] Crash reporter
 - [ ] Task system
@@ -33,11 +39,6 @@
 
 ## Parser
 
-- [x] Create reader
-- [ ] Create in-place array folding mechanisms:
-  - [x] Advanced readers
-  - [x] Convenience methods
-  - [ ] Left folder
 - [ ] Define expression AST
 - [ ] Implement expression parsing
 - [ ] Define scopes and their parsing

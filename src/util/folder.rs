@@ -1,6 +1,5 @@
 // TODO: Code review
 
-use crate::util::slice_ext::ArrayCollectExt;
 use std::mem::{transmute, MaybeUninit};
 
 // === Generic mechanisms === //
@@ -458,20 +457,4 @@ impl<T> Drop for RightFolder<'_, T> {
 
         unsafe { self.target.set_len(self.write_index) };
     }
-}
-
-#[test]
-fn fold_right_primitive_test() {
-    let mut target = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-    let mut folder = RightFolder::new(&mut target);
-    assert_eq!(folder.take(), 1);
-    folder.commit();
-    folder.commit();
-    folder.omit_many(2);
-    folder.commit_many(2);
-    assert_eq!(folder.take_many(2).collect_array(), [8, 9]);
-    drop(folder);
-
-    assert_eq!(&*target, &[2, 3, 6, 7]);
 }

@@ -1,4 +1,4 @@
-use crate::util::reader::LookaheadReader;
+use crate::util::reader::{LookaheadReader, StreamReader, StreamResult};
 use core::str::next_code_point;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -9,6 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::{from_utf8, Utf8Error};
 use std::sync::Arc;
+use thiserror::Error;
 
 // === Logical source === //
 
@@ -391,8 +392,9 @@ impl<'a> CharReader<'a> {
 
 impl LookaheadReader for CharReader<'_> {}
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Error)]
 enum CharReadErr {
+    #[error("Invalid unicode codepoint {0:#X}")]
     BadUnicode(u32),
 }
 
@@ -470,8 +472,12 @@ impl<'a> FileReader<'a> {
     pub fn file(&self) -> &'a SourceFile {
         self.file
     }
+}
 
-    pub fn consume(&mut self) -> ReadAtom {
+impl StreamReader for FileReader<'_> {
+    type Res = ReadAtom;
+
+    fn consume(&mut self) -> Self::Res {
         // Save previous state
         self.prev_pos = self.next_pos;
         self.prev_idx = self.reader.index();
@@ -496,7 +502,7 @@ impl<'a> FileReader<'a> {
         result
     }
 
-    pub fn peek(&self) -> ReadAtom {
+    fn peek(&self) -> ReadAtom {
         self.clone().consume_untracked()
     }
 }
@@ -566,6 +572,18 @@ impl ReadAtom {
     /// The EOF is transformed into the nul character (`\0`).
     pub fn as_char(self) -> char {
         self.as_char_or_eof().nul_eof()
+    }
+}
+
+impl StreamResult for ReadAtom {
+    type Item = ReadAtom;
+
+    fn to_item(self) -> Option<Self::Item> {
+        if self != ReadAtom::Eof {
+            Some(self)
+        } else {
+            None
+        }
     }
 }
 

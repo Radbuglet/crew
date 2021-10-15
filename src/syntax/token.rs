@@ -30,8 +30,8 @@
 use crate::syntax::span::{
     AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
 };
-use crate::util::enum_meta::{enum_meta, EnumMeta};
-use crate::util::reader::LookaheadReader;
+use crate::util::enum_utils::{enum_meta, EnumMeta};
+use crate::util::reader::{IterReader, LookaheadReader, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::sync::Arc;
@@ -41,6 +41,8 @@ use std::sync::Arc;
 pub trait AnyToken: Display {
     fn full_span(&self) -> SpanRef;
 }
+
+pub type TokenStreamReader<'a> = IterReader<std::slice::Iter<'a, Token>>;
 
 #[derive(Debug, Default, Clone)]
 pub struct TokenStream {
@@ -64,6 +66,17 @@ impl TokenStream {
 
     pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
         Arc::make_mut(&mut self.tokens)
+    }
+
+    pub fn as_vec(self) -> Vec<Token> {
+        match Arc::try_unwrap(self.tokens) {
+            Ok(vec) => vec,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+
+    pub fn reader(&self) -> TokenStreamReader<'_> {
+        TokenStreamReader::new(self.tokens().iter())
     }
 }
 
@@ -170,7 +183,7 @@ impl Into<Token> for TokenIdent {
 pub struct TokenPunct {
     pub loc: FileLoc,
     pub is_glued: bool,
-    pub punct: PunctChar,
+    pub char: PunctChar,
 }
 
 impl AnyToken for TokenPunct {
@@ -371,7 +384,7 @@ impl Display for TokenIdent {
 
 impl Display for TokenPunct {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}", self.punct.meta())
+        write!(f, "{}", self.char.meta())
     }
 }
 
@@ -758,7 +771,7 @@ pub fn group_match_punct(reader: &mut FileReader, is_glued: bool) -> Option<Toke
                 Some(TokenPunct {
                     loc: start.as_owned(),
                     is_glued,
-                    punct,
+                    char: punct,
                 })
             } else {
                 None
