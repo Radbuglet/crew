@@ -8,9 +8,7 @@
   - [ ] Fork allocation primitives
   - [ ] Interner
   - [ ] Better backing system
-- [ ] Macro to automate object category generation:
-  - [ ] Optionally nested construction
-  - [ ] Optionally nested casting
+- [x] Macro to automate object category generation:
 - [ ] Create in-place array folding mechanisms:
   - [x] Base interface
   - [ ] Generic reader mechanisms

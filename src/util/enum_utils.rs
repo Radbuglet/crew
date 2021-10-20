@@ -7,10 +7,18 @@ pub trait EnumMeta: 'static + Sized + Copy + Eq + Hash {
     type Meta: 'static;
 
     fn values() -> &'static [(Self, Self::Meta)];
+    fn meta(self) -> &'static Self::Meta;
+
     fn values_iter() -> EnumMetaIter<Self> {
         EnumMetaIter::from_slice(Self::values())
     }
-    fn meta(self) -> &'static Self::Meta;
+
+    fn find_where<F>(mut fn_: F) -> Option<Self>
+    where
+        F: FnMut(Self, &'static Self::Meta) -> bool,
+    {
+        Self::values_iter().find_map(|(val, meta)| if fn_(val, meta) { Some(val) } else { None })
+    }
 }
 
 #[derive(Clone)]
@@ -72,9 +80,9 @@ pub macro enum_meta($(
 )*) {$(
     $(#[$item_attr])*
     #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-    pub enum $item_name {$(
-			$(#[$var_attr])*
-			$var_name
+    $vis enum $item_name {$(
+        $(#[$var_attr])*
+        $var_name
 	),*}
 
     impl $item_name {
@@ -141,12 +149,123 @@ where
     }
 
     fn try_from_disc(discriminant: Self::Discriminant) -> Option<Self> {
-        Self::values_iter().find_map(move |(var, meta)| {
-            if meta.discriminant() == discriminant {
-                Some(var)
-            } else {
-                None
+        Self::find_where(move |_, meta| discriminant == meta.discriminant())
+    }
+}
+
+// === Object categories === //
+
+pub trait ObjectCategoryExt: Sized {
+    fn new<T: VariantOf<Self>>(value: T) -> Self {
+        value.wrap()
+    }
+
+    fn try_cast<T: VariantOf<Self>>(self) -> Result<T, Self> {
+        T::match_owned(self)
+    }
+
+    fn cast<T: VariantOf<Self>>(self) -> T {
+        self.try_cast().ok().unwrap()
+    }
+
+    fn try_cast_ref<T: VariantOf<Self>>(&self) -> Option<&T> {
+        T::match_ref(self)
+    }
+
+    fn cast_ref<T: VariantOf<Self>>(&self) -> &T {
+        self.try_cast_ref().unwrap()
+    }
+
+    fn try_cast_mut<T: VariantOf<Self>>(&mut self) -> Option<&mut T> {
+        T::match_mut(self)
+    }
+
+    fn cast_mut<T: VariantOf<Self>>(&mut self) -> &mut T {
+        self.try_cast_mut().unwrap()
+    }
+}
+
+pub trait VariantOf<E>: Sized {
+    fn wrap(self) -> E;
+    fn match_owned(e: E) -> Result<Self, E>;
+    fn match_ref(e: &E) -> Option<&Self>;
+    fn match_mut(e: &mut E) -> Option<&mut Self>;
+}
+
+// impl<T> ObjectCategoryExt for Option<T> {}
+//
+// impl<E, V: VariantOf<E>> VariantOf<Option<E>> for V {
+//     fn wrap(self) -> Option<E> {
+//         Some(self.wrap())
+//     }
+//
+//     fn match_owned(e: Option<E>) -> Result<Self, Option<E>> {
+//         match e {
+//             Some(inner) => V::match_owned(inner).map_err(|original| Some(original)),
+//             None => None,
+//         }
+//     }
+//
+//     fn match_ref(e: &Option<E>) -> Option<&Self> {
+//         V::match_ref(e?)
+//     }
+//
+//     fn match_mut(e: &mut Option<E>) -> Option<&mut Self> {
+//         V::match_mut(e?)
+//     }
+// }
+
+pub macro enum_categories($(
+    $(#[$item_attr:meta])*
+    $vis:vis enum $item_name:ident {
+        $(
+			$(#[$var_attr:meta])*  // Also accepts doc comments, which are transformed into attributes during tokenization.
+			$var_name:ident$(($var_ty:ty))?
+		),*
+		$(,)?
+    }
+)*) {$(
+    $(#[$item_attr])*
+    $vis enum $item_name {$(
+        $(#[$var_attr])*
+        $var_name$(($var_ty))?
+	),*}
+
+    impl ObjectCategoryExt for $item_name {}
+
+    $($(
+    impl VariantOf<$item_name> for $var_ty {
+        fn wrap(self) -> $item_name {
+            $item_name::$var_name(self)
+        }
+
+        fn match_owned(e: $item_name) -> Result<Self, $item_name> {
+            match e {
+                $item_name::$var_name(val) => Ok(val),
+                e @ _ => Err(e),
             }
-        })
+        }
+
+        fn match_ref(e: &$item_name) -> Option<&Self> {
+            match e {
+                $item_name::$var_name(val) => Some(val),
+                _ => None,
+            }
+        }
+
+        fn match_mut(e: &mut $item_name) -> Option<&mut Self> {
+            match e {
+                $item_name::$var_name(val) => Some(val),
+                _ => None,
+            }
+        }
+    }
+    )?)*
+)*}
+
+enum_categories! {
+    pub enum Foo {
+        A(u8),
+        B(u16),
     }
 }

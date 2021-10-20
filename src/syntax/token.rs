@@ -30,19 +30,13 @@
 use crate::syntax::span::{
     AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
 };
-use crate::util::enum_utils::{enum_meta, EnumMeta};
-use crate::util::reader::{IterReader, LookaheadReader, StreamReader};
+use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
+use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::sync::Arc;
 
-// === IR === //
-
-pub trait AnyToken: Display {
-    fn full_span(&self) -> SpanRef;
-}
-
-pub type TokenStreamReader<'a> = IterReader<std::slice::Iter<'a, Token>>;
+// === Token Stream === //
 
 #[derive(Debug, Default, Clone)]
 pub struct TokenStream {
@@ -76,7 +70,7 @@ impl TokenStream {
     }
 
     pub fn reader(&self) -> TokenStreamReader<'_> {
-        TokenStreamReader::new(self.tokens().iter())
+        TokenStreamReader::new(self.tokens())
     }
 }
 
@@ -96,12 +90,68 @@ impl<'a> IntoIterator for &'a TokenStream {
 }
 
 #[derive(Debug, Clone)]
-pub enum Token {
-    Group(TokenGroup),
-    Ident(TokenIdent),
-    Punct(TokenPunct),
-    StringLit(TokenStringLit),
-    NumberLit(TokenNumberLit),
+pub struct TokenStreamReader<'a> {
+    tokens: &'a [Token],
+    prev: Option<&'a Token>,
+}
+
+impl<'a> TokenStreamReader<'a> {
+    pub fn new(tokens: &'a [Token]) -> Self {
+        Self { tokens, prev: None }
+    }
+
+    pub fn prev(&self) -> Option<&'a Token> {
+        self.prev
+    }
+
+    pub fn remaining(&self) -> &'a [Token] {
+        self.tokens
+    }
+
+    pub fn next_span(&self) -> Option<SpanRef<'a>> {
+        self.peek().map(|token| token.as_any().full_span())
+    }
+
+    pub fn prev_span(&self) -> Option<SpanRef<'a>> {
+        self.prev().map(|token| token.as_any().full_span())
+    }
+
+    pub fn last_loc(&self) -> Option<FileLoc> {
+        self.prev_span().map(|span| span.end().as_owned())
+    }
+}
+
+impl<'a> StreamReader for TokenStreamReader<'a> {
+    type Res = Option<&'a Token>;
+
+    fn consume(&mut self) -> Self::Res {
+        if !self.tokens.is_empty() {
+            self.prev = Some(&self.tokens[0]);
+            self.tokens = &self.tokens[1..];
+            self.prev
+        } else {
+            None
+        }
+    }
+}
+
+impl LookaheadReader for TokenStreamReader<'_> {}
+
+// === IR === //
+
+pub trait AnyToken: Display {
+    fn full_span(&self) -> SpanRef;
+}
+
+enum_categories! {
+    #[derive(Debug, Clone)]
+    pub enum Token {
+        Group(TokenGroup),
+        Ident(TokenIdent),
+        Punct(TokenPunct),
+        StringLit(TokenStringLit),
+        NumberLit(TokenNumberLit),
+    }
 }
 
 impl Token {
@@ -155,12 +205,6 @@ impl AnyToken for TokenGroup {
     }
 }
 
-impl Into<Token> for TokenGroup {
-    fn into(self) -> Token {
-        Token::Group(self)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TokenIdent {
     pub span: Span,
@@ -170,12 +214,6 @@ pub struct TokenIdent {
 impl AnyToken for TokenIdent {
     fn full_span(&self) -> SpanRef {
         self.span.as_ref()
-    }
-}
-
-impl Into<Token> for TokenIdent {
-    fn into(self) -> Token {
-        Token::Ident(self)
     }
 }
 
@@ -192,12 +230,6 @@ impl AnyToken for TokenPunct {
     }
 }
 
-impl Into<Token> for TokenPunct {
-    fn into(self) -> Token {
-        Token::Punct(self)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TokenStringLit {
     pub span: Span,
@@ -208,12 +240,6 @@ pub struct TokenStringLit {
 impl AnyToken for TokenStringLit {
     fn full_span(&self) -> SpanRef {
         self.span.as_ref()
-    }
-}
-
-impl Into<Token> for TokenStringLit {
-    fn into(self) -> Token {
-        Token::StringLit(self)
     }
 }
 
@@ -234,12 +260,6 @@ pub struct TokenNumberLit {
 impl AnyToken for TokenNumberLit {
     fn full_span(&self) -> SpanRef {
         self.span.as_ref()
-    }
-}
-
-impl Into<Token> for TokenNumberLit {
-    fn into(self) -> Token {
-        Token::NumberLit(self)
     }
 }
 
@@ -433,25 +453,14 @@ pub enum DelimiterMode {
     Close,
 }
 
-#[derive(Clone)]
-enum StackFrame {
-    Group(TokenGroup),
-    String(TokenStringLit),
-    BlockComment,
-}
-
-impl Into<StackFrame> for TokenGroup {
-    fn into(self) -> StackFrame {
-        StackFrame::Group(self)
+enum_categories! {
+    #[derive(Clone)]
+    enum StackFrame {
+        Group(TokenGroup),
+        String(TokenStringLit),
+        BlockComment,
     }
 }
-
-impl Into<StackFrame> for TokenStringLit {
-    fn into(self) -> StackFrame {
-        StackFrame::String(self)
-    }
-}
-
 // === Tokenizing === //
 
 pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
@@ -496,7 +505,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
 
                         match stack.last_mut() {
                             Some(StackFrame::Group(parent)) => {
-                                parent.tokens_mut().push(child.into())
+                                parent.tokens_mut().push(child.wrap())
                             }
                             Some(StackFrame::String(str)) => {
                                 str.parts.push(StringComponent::Template(child))
@@ -609,7 +618,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
 
                         match stack.last_mut() {
                             Some(StackFrame::Group(group)) => {
-                                group.tokens_mut().push(string.into())
+                                group.tokens_mut().push(string.wrap())
                             }
                             Some(StackFrame::String(_)) => unreachable!(),
                             Some(StackFrame::BlockComment) => unreachable!(),
@@ -632,7 +641,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                                 Span::new(&reader.prev_loc(), &reader.prev_loc()),
                                 GroupDelimiter::Brace,
                             )
-                            .into(),
+                            .wrap(),
                         );
 
                         break;
@@ -766,16 +775,12 @@ pub fn group_match_punct(reader: &mut FileReader, is_glued: bool) -> Option<Toke
             _ => return None,
         };
 
-        PunctChar::values_iter().find_map(move |(punct, char)| {
-            if read == *char {
-                Some(TokenPunct {
-                    loc: start.as_owned(),
-                    is_glued,
-                    char: punct,
-                })
-            } else {
-                None
-            }
+        let char = PunctChar::find_where(move |_, codepoint| read == *codepoint)?;
+
+        Some(TokenPunct {
+            loc: start.as_owned(),
+            is_glued,
+            char,
         })
     })
 }
@@ -884,13 +889,7 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
 
                 // Consume prefix character
                 let read = reader.consume().as_char().to_ascii_lowercase();
-                NumberPrefix::values_iter().find_map(move |(prefix, meta)| {
-                    if Some(read) == meta.prefix {
-                        Some(prefix)
-                    } else {
-                        None
-                    }
-                })
+                NumberPrefix::find_where(move |_, meta| Some(read) == meta.prefix)
             })
             .unwrap_or(NumberPrefix::Decimal);
 

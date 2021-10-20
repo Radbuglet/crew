@@ -167,7 +167,7 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.end = locs[1];
     }
 
-    pub fn set_left<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    pub fn set_start<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
         assert_eq!(
             loc.file(),
             self.file(),
@@ -177,7 +177,7 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.set_pair_unchecked(loc.raw, self.end);
     }
 
-    pub fn set_right<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    pub fn set_end<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
         assert_eq!(
             loc.file(),
             self.file(),
