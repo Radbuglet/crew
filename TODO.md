@@ -7,15 +7,26 @@
   - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
   - [ ] Fork allocation primitives
   - [ ] Interner
-  - [ ] Better backing system
-- [x] Macro to automate object category generation:
+- [x] Macro to automate object category generation
 - [ ] Create in-place array folding mechanisms:
   - [x] Base interface
-  - [ ] Generic reader mechanisms
+  - [x] Advanced folding mechanisms
   - [ ] Left folder
 - [ ] Diagnostic system
 - [ ] Crash reporter
 - [ ] Task system
+
+### Nitpicks
+
+- [ ] Enum meta should support variants
+- [ ] Object categories should be nestable
+- [ ] Enum meta and object categories should support generics
+- [ ] `Readers` should support mutable semantics
+- [ ] We should make some more `Reader` adapters
+- [ ] `Folders` should support the closure-return system
+- [ ] The `Folder` API can be improved significantly.
+- [ ] The backing system for `Spans` should be generic and lifetimes should be maximized.
+- [ ] Ideally, we could optimize trees by representing them as state machines.
 
 ## Tokenizer
 

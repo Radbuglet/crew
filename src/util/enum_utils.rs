@@ -192,29 +192,6 @@ pub trait VariantOf<E>: Sized {
     fn match_mut(e: &mut E) -> Option<&mut Self>;
 }
 
-// impl<T> ObjectCategoryExt for Option<T> {}
-//
-// impl<E, V: VariantOf<E>> VariantOf<Option<E>> for V {
-//     fn wrap(self) -> Option<E> {
-//         Some(self.wrap())
-//     }
-//
-//     fn match_owned(e: Option<E>) -> Result<Self, Option<E>> {
-//         match e {
-//             Some(inner) => V::match_owned(inner).map_err(|original| Some(original)),
-//             None => None,
-//         }
-//     }
-//
-//     fn match_ref(e: &Option<E>) -> Option<&Self> {
-//         V::match_ref(e?)
-//     }
-//
-//     fn match_mut(e: &mut Option<E>) -> Option<&mut Self> {
-//         V::match_mut(e?)
-//     }
-// }
-
 pub macro enum_categories($(
     $(#[$item_attr:meta])*
     $vis:vis enum $item_name:ident {
@@ -262,10 +239,3 @@ pub macro enum_categories($(
     }
     )?)*
 )*}
-
-enum_categories! {
-    pub enum Foo {
-        A(u8),
-        B(u16),
-    }
-}

@@ -1,35 +1,69 @@
 // TODO: Code review
 
+use crate::util::reader::{LookaheadReader, StreamReader};
+use crate::util::slice_ext::{ArrayCollectExt, TakeAtExt};
 use std::mem::{transmute, MaybeUninit};
 
 // === Generic mechanisms === //
 
-// #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-// pub struct FolderLoc {
-//     pub index: usize,
-// }
-//
-// impl FolderLoc {
-//     pub fn add(self, rel: usize) -> Self {
-//         Self {
-//             index: self.index + rel,
-//         }
-//     }
-//
-//     pub fn sub(self, rel: usize) -> Self {
-//         Self {
-//             index: self.index - rel,
-//         }
-//     }
-//
-//     pub fn next(self) -> Self {
-//         self.add(1)
-//     }
-//
-//     pub fn prev(self) -> Self {
-//         self.sub(1)
-//     }
-// }
+pub trait FolderPos: Sized + Copy + Eq + Ord {
+    fn as_rel_raw(self, root_loc: usize) -> usize;
+    fn as_abs_raw(self, root_loc: usize) -> Abs;
+
+    fn as_rel<F: ?Sized + Folder>(self, folder: &F) -> usize {
+        self.as_rel_raw(folder.next_abs_raw())
+    }
+
+    fn as_abs<F: ?Sized + Folder>(self, folder: &F) -> Abs {
+        self.as_abs_raw(folder.next_abs_raw())
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Abs(pub usize);
+
+impl Abs {
+    pub fn add(self, rel: usize) -> Self {
+        Self(self.0 + rel)
+    }
+
+    pub fn sub(self, rel: usize) -> Self {
+        Self(self.0 - rel)
+    }
+
+    pub fn next(self) -> Self {
+        self.add(1)
+    }
+
+    pub fn prev(self) -> Self {
+        self.sub(1)
+    }
+
+    pub fn is_accessible_by<F: ?Sized + Folder>(self, folder: &F) -> bool {
+        self.0 >= folder.next_abs_raw()
+    }
+}
+
+impl FolderPos for Abs {
+    fn as_rel_raw(self, root: usize) -> usize {
+        assert!(self.0 >= root);
+        self.0 - root
+    }
+
+    fn as_abs_raw(self, _root: usize) -> Abs {
+        self
+    }
+}
+
+impl FolderPos for usize {
+    fn as_rel_raw(self, _root: usize) -> usize {
+        self
+    }
+
+    fn as_abs_raw(self, root: usize) -> Abs {
+        Abs(root + self)
+    }
+}
 
 /// Folders a very useful reader-like construct which allow users to procedurally move through an
 /// array from either left-to-right ([RightFolder]) or right-to-left ([LeftFolder]) to accept, replace,
@@ -42,7 +76,15 @@ pub trait Folder {
 
     // === List querying === //
 
+    fn next_abs_raw(&self) -> usize;
+
+    fn next_loc(&self) -> Abs {
+        (0).as_abs(self)
+    }
+
     fn remaining(&self) -> usize;
+
+    fn free_slots(&self) -> usize;
 
     fn has_remaining(&self) -> bool {
         self.remaining() > 0
@@ -66,22 +108,6 @@ pub trait Folder {
         self.split_mut().1
     }
 
-    // fn get_rel(&self, rel: usize) -> &Self::Item {
-    //     &self.proceeding()[rel]
-    // }
-    //
-    // fn get_rel_mut(&mut self, rel: usize) -> &mut Self::Item {
-    //     &mut self.proceeding_mut()[rel]
-    // }
-    //
-    // fn get_at(&self, loc: FolderLoc) -> &Self::Item {
-    //     self.get_rel(self.resolve_rel_index(loc))
-    // }
-    //
-    // fn get_at_mut(&mut self, loc: FolderLoc) -> &mut Self::Item {
-    //     self.get_rel_mut(self.resolve_rel_index(loc))
-    // }
-
     // === Primitive list modification === //
 
     fn new_len(&self) -> usize;
@@ -92,21 +118,15 @@ pub trait Folder {
         self.commit_many(1);
     }
 
-    // fn commit_until(&mut self, loc: FolderLoc) {
-    //     self.commit_many(self.resolve_rel_index(loc))
-    // }
-
     fn omit_many(&mut self, count: usize);
 
     fn omit(&mut self) {
         self.omit_many(1);
     }
 
-    // fn omit_until(&mut self, loc: FolderLoc) {
-    //     self.omit_many(self.resolve_rel_index(loc))
-    // }
-
     fn take(&mut self) -> Self::Item;
+
+    fn push(&mut self, item: Self::Item);
 
     // === Simple modification === //
 
@@ -115,172 +135,70 @@ pub trait Folder {
         self.commit();
     }
 
-    // fn produce_until(&mut self, loc: FolderLoc, value: Self::Item) {
-    //     self.produce(self.resolve_rel_index(loc), value)
-    // }
-
     fn reduce(&mut self, count: usize, value: Self::Item) {
-        debug_assert!(self.remaining() >= count);
+        assert!(self.remaining() >= count);
 
-        self.proceeding_mut()[count - 1] = value;
         self.omit_many(count - 1);
+        self.proceeding_mut()[0] = value;
     }
-
-    // fn reduce_until(&mut self, loc: FolderLoc, value: Self::Item) {
-    //     self.reduce(self.resolve_rel_index(loc), value)
-    // }
-
-    // === Index system === //
-
-    // fn root_loc(&self) -> usize;
-    //
-    // fn can_touch(&self, loc: FolderLoc) -> bool {
-    //     loc.index >= self.root_loc()
-    // }
-    //
-    // fn resolve_rel_index(&self, loc: FolderLoc) -> usize {
-    //     assert!(self.can_touch(loc));
-    //     loc.index - self.root_loc()
-    // }
-    //
-    // fn loc_of(&self, rel: usize) -> FolderLoc {
-    //     FolderLoc {
-    //         index: self.root_loc() + rel,
-    //     }
-    // }
-    //
-    // fn loc_of_first(&self) -> FolderLoc {
-    //     self.loc_of(0)
-    // }
-    //
-    // fn swap(&mut self, a: FolderLoc, b: FolderLoc) {
-    //     let (a_idx, b_idx) = (self.resolve_rel_index(a), self.resolve_rel_index(b));
-    //     self.proceeding_mut().swap(a_idx, b_idx);
-    // }
-    //
-    // fn swap_tracked(&mut self, a: &mut FolderLoc, b: &mut FolderLoc) {
-    //     self.swap(*a, *b);
-    //     std::mem::swap(a, b);
-    // }
 }
 
 pub trait FolderExt: Folder {
+    fn reader(&mut self) -> FolderReader<'_, Self::Item> {
+        FolderReader {
+            remaining: self.proceeding(),
+            pos: self.next_loc(),
+            prev: None,
+        }
+    }
+
+    fn lookahead<'a, F, R>(&'a mut self, fn_: F) -> R
+    where
+        F: FnOnce(&mut FolderReader<'a, Self::Item>) -> R,
+    {
+        fn_(&mut self.reader())
+    }
+
+    fn take_drain(&mut self) -> FolderOmitIter<'_, Self> {
+        FolderOmitIter::new(self)
+    }
+
     fn take_many(&mut self, count: usize) -> FolderOmitDrain<'_, Self> {
         FolderOmitDrain::new(self, count)
     }
 
-    // fn reader(&self) -> FolderReader<'_, Self::Item> {
-    //     FolderReader::new(self)
-    // }
-    //
-    // fn peek<F, R>(&self, handler: F) -> R
-    // where
-    //     F: FnOnce(&mut FolderReader<'_, Self::Item>) -> R,
-    // {
-    //     handler(&mut self.reader())
-    // }
+    fn take_at<T: FolderPos, const N: usize>(&mut self, locs: [T; N]) -> [Self::Item; N] {
+        let root = self.next_abs_raw();
+
+        self.take_drain()
+            .take_at(locs.iter().map(move |loc| loc.as_rel_raw(root)))
+            .collect_array()
+    }
 }
 
 impl<F: ?Sized + Folder> FolderExt for F {}
 
-// pub struct FolderReader<'a, T> {
-//     iter: AnnotatedFolderIter<'a, T>,
-// }
-//
-// impl<T> Clone for FolderReader<'_, T> {
-//     fn clone(&self) -> Self {
-//         Self {
-//             iter: self.iter.clone(),
-//         }
-//     }
-// }
-//
-// impl<T> LookaheadReader for FolderReader<'_, T> {}
-//
-// impl<'a, T> FolderReader<'a, T> {
-//     pub fn new<F: ?Sized + Folder<Item = T>>(folder: &'a F) -> Self {
-//         Self {
-//             iter: AnnotatedFolderIter {
-//                 slice: folder.proceeding(),
-//                 loc: folder.loc_of_first(),
-//             },
-//         }
-//     }
-//
-//     pub fn remaining(&self) -> &'a [T] {
-//         self.iter.slice
-//     }
-//
-//     pub fn remaining_annotated(&self) -> AnnotatedFolderIter<'a, T> {
-//         self.iter.clone()
-//     }
-//
-//     pub fn consume_loc(&mut self) -> Option<(FolderLoc, &'a T)> {
-//         self.iter.next()
-//     }
-//
-//     pub fn consume(&mut self) -> Option<&'a T> {
-//         self.consume_loc().map(|(_, ref_)| ref_)
-//     }
-//
-//     pub fn peek_loc(&self) -> Option<(FolderLoc, &'a T)> {
-//         self.clone().consume_loc()
-//     }
-//
-//     pub fn peek(&self) -> Option<&'a T> {
-//         self.clone().consume()
-//     }
-//
-//     pub fn next_loc(&self) -> FolderLoc {
-//         self.iter.loc
-//     }
-//
-//     pub fn prev_loc(&self) -> FolderLoc {
-//         self.iter.loc.prev()
-//     }
-// }
-//
-// pub struct AnnotatedFolderIter<'a, T> {
-//     slice: &'a [T],
-//     loc: FolderLoc,
-// }
-//
-// impl<T> Clone for AnnotatedFolderIter<'_, T> {
-//     fn clone(&self) -> Self {
-//         Self {
-//             slice: self.slice,
-//             loc: self.loc,
-//         }
-//     }
-// }
-//
-// impl<'a, T> Iterator for AnnotatedFolderIter<'a, T> {
-//     type Item = (FolderLoc, &'a T);
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         if let Some(first) = self.slice.first() {
-//             let loc = self.loc.next();
-//             self.slice = &self.slice[1..];
-//             self.loc = self.loc.next();
-//             Some((loc, first))
-//         } else {
-//             None
-//         }
-//     }
-//
-//     fn size_hint(&self) -> (usize, Option<usize>) {
-//         (self.slice.len(), Some(self.slice.len()))
-//     }
-//
-//     fn count(self) -> usize
-//     where
-//         Self: Sized,
-//     {
-//         self.slice.len()
-//     }
-// }
-//
-// impl<'a, T> ExactSizeIterator for AnnotatedFolderIter<'a, T> {}
+pub struct FolderOmitIter<'a, T: ?Sized + Folder> {
+    target: &'a mut T,
+}
+
+impl<'a, T: ?Sized + Folder> FolderOmitIter<'a, T> {
+    pub fn new(target: &'a mut T) -> Self {
+        Self { target }
+    }
+}
+
+impl<T: ?Sized + Folder> Iterator for FolderOmitIter<'_, T> {
+    type Item = T::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.target.has_remaining() {
+            Some(self.target.take())
+        } else {
+            None
+        }
+    }
+}
 
 pub struct FolderOmitDrain<'a, T: ?Sized + Folder> {
     target: &'a mut T,
@@ -289,6 +207,8 @@ pub struct FolderOmitDrain<'a, T: ?Sized + Folder> {
 
 impl<'a, T: ?Sized + Folder> FolderOmitDrain<'a, T> {
     pub fn new(target: &'a mut T, count: usize) -> Self {
+        assert!(target.remaining() >= count);
+
         Self {
             target,
             remaining: count,
@@ -327,6 +247,63 @@ impl<T: ?Sized + Folder> Drop for FolderOmitDrain<'_, T> {
         self.target.omit_many(self.remaining);
     }
 }
+
+#[derive(Debug)]
+pub struct FolderReader<'a, T> {
+    remaining: &'a [T],
+    pos: Abs,
+    prev: Option<&'a T>,
+}
+
+impl<T> Clone for FolderReader<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            remaining: self.remaining,
+            pos: self.pos,
+            prev: self.prev,
+        }
+    }
+}
+
+impl<'a, T> FolderReader<'a, T> {
+    pub fn prev(&self) -> Option<&'a T> {
+        self.prev
+    }
+
+    pub fn remaining(&self) -> &'a [T] {
+        self.remaining
+    }
+
+    pub fn prev_pos(&self) -> Abs {
+        assert!(self.prev.is_some());
+        self.pos.prev()
+    }
+
+    pub fn next_pos(&self) -> Abs {
+        self.pos
+    }
+
+    pub fn consume_loc(&mut self) -> Option<(&'a T, Abs)> {
+        self.consume().map(|ref_| (ref_, self.prev_pos()))
+    }
+}
+
+impl<'a, T> StreamReader for FolderReader<'a, T> {
+    type Res = Option<&'a T>;
+
+    fn consume(&mut self) -> Self::Res {
+        if !self.remaining.is_empty() {
+            self.prev = Some(&self.remaining[0]);
+            self.pos = self.pos.next();
+            self.remaining = &self.remaining[1..];
+            self.prev
+        } else {
+            None
+        }
+    }
+}
+
+impl<T> LookaheadReader for FolderReader<'_, T> {}
 
 // === Primitive folders === //
 
@@ -368,8 +345,16 @@ impl<'a, T> RightFolder<'a, T> {
 impl<T> Folder for RightFolder<'_, T> {
     type Item = T;
 
+    fn next_abs_raw(&self) -> usize {
+        self.read_index
+    }
+
     fn remaining(&self) -> usize {
         self.target.len() - self.read_index
+    }
+
+    fn free_slots(&self) -> usize {
+        self.read_index - self.write_index
     }
 
     fn preceding<'a>(&'a self) -> &'a [Self::Item] {
@@ -390,7 +375,6 @@ impl<T> Folder for RightFolder<'_, T> {
 
     fn split_mut<'a>(&'a mut self) -> (&'a mut [Self::Item], &'a mut [Self::Item]) {
         // Split vector
-        // TODO: Implement n-splitting generically
         let (committed, right) = self.target.split_at_mut(self.write_index);
         let (_, uncommitted) = right.split_at_mut(self.read_index - self.write_index);
 
@@ -410,7 +394,7 @@ impl<T> Folder for RightFolder<'_, T> {
     }
 
     fn commit_many(&mut self, count: usize) {
-        debug_assert!(self.read_index + count <= self.target.len());
+        assert!(self.read_index + count <= self.target.len());
 
         for _ in 0..count {
             // Move the item from the uncommitted block to the committed block.
@@ -423,18 +407,19 @@ impl<T> Folder for RightFolder<'_, T> {
     }
 
     fn omit_many(&mut self, count: usize) {
-        debug_assert!(self.read_index + count <= self.target.len());
+        assert!(self.read_index + count <= self.target.len());
 
         // N.B. we increment the `read_index` before our calls to drop because users could panic and
         // potentially cause the proceeding block to be filled with logically uninitialized values.
+        let start = self.read_index;
         self.read_index += count;
-        for omitted in self.target[self.read_index..].iter_mut().take(count) {
+        for omitted in &mut self.target[start..self.read_index] {
             unsafe { omitted.assume_init_drop() };
         }
     }
 
     fn take(&mut self) -> Self::Item {
-        debug_assert!(self.read_index < self.target.len());
+        assert!(self.read_index < self.target.len());
 
         let taken = unsafe { self.target[self.read_index].assume_init_read() };
         // This slot is now included in the dead block. No need to drop it though because the move
@@ -443,18 +428,124 @@ impl<T> Folder for RightFolder<'_, T> {
         taken
     }
 
-    // fn root_loc(&self) -> usize {
-    //     self.read_index
-    // }
+    fn push(&mut self, item: Self::Item) {
+        assert!(self.free_slots() > 0);
+        self.target[self.write_index] = MaybeUninit::new(item);
+        self.write_index += 1;
+    }
 }
 
 impl<T> Drop for RightFolder<'_, T> {
     fn drop(&mut self) {
+        // Semi-questionable lifetime prolongation.
+        let drop_slice = self.target.as_mut_slice() as *mut [MaybeUninit<T>];
+        let drop_slice = unsafe { &mut (&mut *drop_slice)[self.read_index..] };
+
+        // N.B. we set the length before dropping the elements because users could panic in the middle
+        // of the drop loop.
+        unsafe { self.target.set_len(self.write_index) };
+
         // Drop elements in the uncommitted block
-        for uncommitted in &mut self.target[self.read_index..] {
+        for uncommitted in drop_slice {
             unsafe { uncommitted.assume_init_drop() }
         }
-
-        unsafe { self.target.set_len(self.write_index) };
     }
+}
+
+#[test]
+fn test_equation() {
+    // === Ast === //
+    #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+    enum BinOp {
+        Add,
+        Mul,
+        Sub,
+        Div,
+    }
+
+    #[derive(Debug, Clone)]
+    enum Atom {
+        Expr(Expr),
+        Op(BinOp),
+    }
+
+    #[derive(Debug, Clone)]
+    enum Expr {
+        Lit(i32),
+        Bin {
+            lhs: Box<Expr>,
+            rhs: Box<Expr>,
+            op: BinOp,
+        },
+    }
+
+    // === Example logic === //
+    fn lit(a: i32) -> Atom {
+        Atom::Expr(Expr::Lit(a))
+    }
+
+    let mut target = vec![
+        lit(2),
+        Atom::Op(BinOp::Add),
+        lit(4),
+        Atom::Op(BinOp::Mul),
+        lit(5),
+    ];
+
+    fn fold_bin_op<F: Folder<Item = Atom>>(folder: &mut F, ops: &[BinOp]) {
+        while folder.has_remaining() {
+            if let Some((lhs, op, rhs)) = folder.lookahead(|reader| {
+                let lhs = match reader.consume_loc() {
+                    Some((Atom::Expr(_), pos)) => pos,
+                    _ => return None,
+                };
+
+                let op = match reader.consume_loc() {
+                    Some((Atom::Op(op), _)) if ops.contains(op) => op,
+                    _ => return None,
+                };
+
+                let rhs = match reader.consume_loc() {
+                    Some((Atom::Expr(_), pos)) => pos,
+                    _ => return None,
+                };
+
+                Some((lhs, *op, rhs))
+            }) {
+                let [lhs, rhs] = folder.take_at([lhs, rhs]);
+                let lhs = match lhs {
+                    Atom::Expr(expr) => expr,
+                    _ => unreachable!(),
+                };
+
+                let rhs = match rhs {
+                    Atom::Expr(expr) => expr,
+                    _ => unreachable!(),
+                };
+
+                folder.push(Atom::Expr(Expr::Bin {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    op,
+                }));
+
+                continue;
+            }
+
+            folder.commit();
+        }
+    }
+
+    fold_bin_op(
+        &mut RightFolder::new(&mut target),
+        &[BinOp::Mul, BinOp::Div],
+    );
+
+    fold_bin_op(
+        &mut RightFolder::new(&mut target),
+        &[BinOp::Add, BinOp::Sub],
+    );
+
+    assert_eq!(target.len(), 1);
+    println!("Folded result:\n{:#?}", target);
 }

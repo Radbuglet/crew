@@ -24,6 +24,13 @@ struct SourceFileInner {
 }
 
 impl SourceFile {
+    pub fn dummy() -> (Self, Span, FileLoc) {
+        let file = SourceFile::from_bytes("DUMMY_FILE".into(), Vec::new());
+        let loc = file.head().as_owned();
+        let span = Span::new(&loc, &loc);
+        (file, span, loc)
+    }
+
     pub fn from_file(path: PathBuf) -> io::Result<Self> {
         let bytes = fs::read(&path)?;
         Ok(Self::from_bytes(path, bytes))

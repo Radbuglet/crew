@@ -205,13 +205,22 @@ pub struct AstExprSuffixOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstExprIndex {}
+pub struct AstExprIndex {
+    pub left: Box<AstExpr>,
+    pub indexer: Box<AstExpr>,
+}
 
 #[derive(Debug, Clone)]
-pub struct AstExprProperty {}
+pub struct AstExprProperty {
+    pub left: Box<AstExpr>,
+    pub prop: TokenIdent,
+}
 
 #[derive(Debug, Clone)]
-pub struct AstExprCall {}
+pub struct AstExprCall {
+    pub left: Box<AstExpr>,
+    pub args: Vec<AstExpr>,
+}
 
 #[derive(Debug, Clone)]
 pub struct AstBlock {
@@ -298,13 +307,31 @@ enum_meta! {
     }
 
     #[derive(Debug)]
-    pub enum(&'static [PunctChar]) AstBinOpKind {}
+    pub enum(&'static [PunctChar]) AstBinOpKind {
+        Add = &[PunctChar::Plus],
+        Sub = &[PunctChar::Dash],
+        Mul = &[PunctChar::Asterisk],
+        Div = &[PunctChar::Slash],
+        Mod = &[PunctChar::Percent],
+        Pow = &[PunctChar::Asterisk],
+        BitXor = &[PunctChar::Caret],
+        BitOr = &[PunctChar::Bar],
+        BitAnd = &[PunctChar::Ampersand],
+        ShortOr = &[PunctChar::Bar, PunctChar::Bar],
+        ShortAnd = &[PunctChar::Ampersand, PunctChar::Ampersand],
+    }
 
     #[derive(Debug)]
-    pub enum(&'static [PunctChar]) AstUnaryOpKind {}
+    pub enum(PunctChar) AstUnaryOpKind {
+        Pos = PunctChar::Plus,
+        Neg = PunctChar::Dash,
+        Not = PunctChar::Exclamation,
+    }
 
     #[derive(Debug)]
-    pub enum(&'static [PunctChar]) AstSuffixOpKind {}
+    pub enum(PunctChar) AstSuffixOpKind {
+        Try = PunctChar::Question,
+    }
 
     #[derive(Debug)]
     pub enum(Option<PunctChar>) AstCastKind {
