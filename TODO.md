@@ -27,6 +27,10 @@
 - [ ] The `Folder` API can be improved significantly.
 - [ ] The backing system for `Spans` should be generic and lifetimes should be maximized.
 - [ ] Ideally, we could optimize trees by representing them as state machines.
+- [ ] We create a lot of temporaries unnecessarily.
+- [ ] Readers have very bad match on error semantics.
+- [ ] `TokenStreams` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
+- [ ] `TokenStreams` should also have a slice type.
 
 ## Tokenizer
 
@@ -68,9 +72,8 @@
 - [ ] Error propagation (`?`) syntax with implicit conversion
 - [ ] `return` to named block
 - [ ] `break`/`continue`/`return` within specific closures that support it (done by propagating a `ControlFlow<T, L>` result object)
-- [ ] Implement move/clone semantics for classes and allow them to handle destruction.
-- [ ] Implement `RCs` which take ownership of these classes.
-- [ ] Implement garbage collected pointers which take ownership of these classes.
+- [ ] Garbage collection with support for finalizers, cleanup hooks, and weak references.
+- [ ] User-defined value types through `struct`.
 - [ ] Combine Java-style enum metadata with Rust-style sum type enums
 - [ ] Actual `statics`
 - [ ] Programmatic `TokenStream` macros (support macros by example?).
@@ -86,3 +89,4 @@
 - [ ] Allow users to dynamically specify input fields (as either values or property getters) and methods (as closures).
 - [ ] Unified `async` and iterator handling through coroutines.
 - [ ] No required runtime, allow host to decide which function is the entry point.
+- [ ] `static` is handled by creating an associated singleton class instance. The static singleton is accessed by the class' name. In a class context, `static` annotates arbitrary items to mark them as going in the singleton instead of in the class instance. The only functional difference between `static` items and normal items is that fields must either have an initialization routine or the class must define a static initializer block. This means that static classes can expose other classes including `IDefault`, an interface which allows users to skip that field while directly instantiating a class.

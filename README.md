@@ -67,7 +67,7 @@ fn update_entity(entity: Entity) {
 }
 ```
 
-Exposing in Crew is functionally more similar to manual interface delegation than to component resolution. To a user, this means that a parent class upcasted to a component class will still result in a reference the parent class, causing both references to have pointer equality and the ability to cast to each other, whereas directly referencing the exposed instance will retrieve a reference to the component instance, with the direct reference lacking the ability to downcast to its parent.
+Exposing in Crew is functionally more similar to manual interface delegation than to component resolution. To a user, this means that a parent class upcasted to a component class will still result in a reference the parent class, causing both references to have pointer equality and the ability to cast to each other. However, when a user directly accesses the exposed instance, they obtain a direct reference to the component instance which cannot be "down-casted" to its logical parents.
 
 ```
 // "ptr_eq" is a compiler intrinsic for checking pointer equality.
@@ -102,7 +102,7 @@ fn eq(parent: Parent) {
 
 This decision liberates users to expose components within multiple parent classes simultaneously and allows the parent class to change which class instance is being exposed while users are referencing it.
 
-Exposition comes in two flavors: static and dynamic. Static exposition resolves the interface of the object from concrete types, omitting everything that isn't part of that type. V-tables involving statically exposed components can be prepared ahead of time by the compiler and generally result in higher efficiency. Unqualified `out` is a form of static exposition and will infer the exposed type from the type of the field or parameter.
+Exposition comes in two flavors: static and dynamic. Static exposition resolves the interface of the object from concrete types, omitting everything in the target interface that isn't part of that type. V-tables involving statically exposed components can be prepared ahead of time by the compiler and generally result in higher efficiency. Unqualified `out` is a form of static exposition and will infer the exposed type from the type of the field or parameter.
 
 ```
 class Box<T> {
@@ -110,44 +110,58 @@ class Box<T> {
 }
 
 class DynBox<T> {
-    pub out(dyn) val target: T;
+    // We expose "T" and "dyn" so users can statically access items from "T" but can also
+    // access dynamic members of the "target" by casting this class.
+    pub out(T, dyn) val target: T;
 }
 
 class Player {
     pub out val entity: Entity;
     
+    // Crew does not have default constructors. Instead, we define a static method to act as the constructor.
     pub static fn new() -> Self {
         Self {
-            entity: Entity {},
+            entity: Entity { ... },
         }
+    }
+    
+    pub fn player_method() {
+        ...
     }
 }
 
 class Entity {
     ...
+    
+    pub fn entity_method() {
+        ...
+    } 
 }
 
 fn main() {
     val player = Player::new();
     val player_as_entity = player as Entity;
-    val direct_entity = player.entity;
     
     val static_box = Box<Entity> { target: player_as_entity };
     val dynamic_box = DynBox<Entity> { target: player_as_entity };
-    val dynamic_box_direct = DynBox<Entity> { target: direct_entity };
     
-    // The static box only exposes the `Entity` and its subcomponents.
+    // The static box only exposes the "Entity" and its subcomponents.
     assert((static_box as? Player).is_none());
     assert((static_box as? Entity).is_some());
+
+    static_box.entity_method();
     
-    // The dynamic box exposes the root-level components of its target, which, in this case, is Player.
-    // In effect, it behaves as if it were a normal reference to `Player`.
-    assert((static_box as? Player).is_some());
+    // The dynamic box exposes the entire interface of its target, including both "Player" and "Entity".
+    assert((dynamic_box as? Player).is_some());
+    assert((dynamic_box as? Entity).is_some());  // This can be proven statically. 
     
-    // However, as we've seen before, direct references to components cannot be downcasted to their parent.
-    // We can only cast the object to an Entity.
-    assert((static_box as? Player).is_none());
-    assert((static_box as? Entity).is_some());
+    // We can only *statically* access "Entity" methods on the "dynamic_box".
+    dynamic_box.entity_method();
+
+    // However, we can dynamically cast the box to include "Player".
+    val dynamic_box_with_player = dynamic_box as! _ + Player;
+    dynamic_box_with_player.entity_method();
+    dynamic_box_with_player.player_method();
 }
 ```
 
@@ -177,7 +191,7 @@ fn test(container: Container) {
 }
 ```
 
-Users can allow exposed components to be overridden by qualifying it with the `open` qualifier. Non-`open` properties will always override `open` ones. In the case where two or more components collide but all of them have the `open` qualifier, the component exposed the latest in the class will be selected. In cases where generic parameters are exposed statically, the type checker cannot prove that the concrete type of the parameter will not interfere with existing components, requiring the `open` qualifier.
+Users can allow exposed components to be overridden by qualifying it with the `open` qualifier. Non-`open` properties will always override `open` ones. In the case where two or more components collide but all of them have the `open` qualifier, the user can re-expose the instance they want to expose or explicitly remove the exposed class from the exposed class list (done with the class removal `-` syntax). In cases where generic parameters are exposed statically, the type checker cannot prove that the concrete type of the parameter will not interfere with existing components, requiring the `open` qualifier.
 
 ```
 // TODO: Example
@@ -327,4 +341,8 @@ enum Stage {
 **TODO:** Document scope-qualification in `in` to limit who can implement a member prototype.
 
 **TODO:** Document `IDynamicExposer<T>` and `IDynamicallyCall<T>` and give examples of their use.
+
+## Implementation Status
+
+See [TODO.md](TODO.md) for more details on the MVP compiler's implementation status.
 
