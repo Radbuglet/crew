@@ -31,6 +31,10 @@ impl SourceFile {
         (file, span, loc)
     }
 
+    pub fn from_str(path: String, contents: String) -> Self {
+        Self::from_bytes(path.into(), contents.into_bytes())
+    }
+
     pub fn from_file(path: PathBuf) -> io::Result<Self> {
         let bytes = fs::read(&path)?;
         Ok(Self::from_bytes(path, bytes))

@@ -1,0 +1,115 @@
+use core::ops::IDefault;
+use str_utils::pluralize;
+
+pub class IMyInterface {
+	// We can specify statics inside their own block...
+	static {
+		var my_static_value: u32;
+
+		out val default: IDefault impl {
+			static fn default() -> Self {
+				self.my_static_value += 1;
+				print($"Constructed default IMyInterface instance {self.my_static_value} \
+					  |time{pluralize::s_char(self.my_static_value)}");
+
+				Self {}
+			}
+		}
+	}
+
+	// Here's another constructor.
+	pub static fn new() -> Self {
+		Self {}
+	}
+
+	// Or just annotate items directly.
+	pub static fn doSomething() {
+		print("Did something.");
+	}
+
+	// "in out" just means that whatever input we provide will be re-exposed by this class.
+	// This ensures that if a user has "IMyInterface", its "IMyOtherInterface" component will be the same as the component
+	// contained in this input field.
+	pub in out val inherit: IMyOtherInterface;
+
+	pub in fn myMethod1();
+	pub in fn myMethod2();
+}
+
+@Derive(Default)
+pub class IMyOtherInterface {
+	// Yes, type aliases can become input parameters.
+	pub in type AssociatedType;
+
+	// This input can only be filled out by classes in descendants of the parent module.
+	pub in(^) fn myMethod3(value: AssociatedType);
+	pub in fn myMethod4() -> AssociatedType;
+}
+
+pub class MyInstance {
+	out val my_interface: IMyInterface impl {
+		// "val <target>: <type> impl { ... }" is just short-hand for "impl(<target>._) { ... }".
+		// "on" is a special item which allows you to apply qualifiers to an existing item. "_" normally infers the target
+		// input from the item name after stripping it from underscore delimited prefixes but users can specify an "as"
+		// qualifier to specify the exact target name. Technically, the syntax should be "as inherit on my_other_interface"
+		// but we added a special case here because it looks nice.
+		on my_other_interface as inherit;
+
+		fn myMethod1() {
+			...
+		}
+
+		fn prefixesAreFine_myMethod2() {
+			...
+		}
+	};
+
+	out val my_other_interface: IMyOtherInterface impl {
+		type AssociatedType = u8;
+
+		fn myMethod3(value: AssociatedType) {
+			...
+		}
+
+		fn myMethod4() -> AssociatedType {
+			...
+		}
+	};
+
+	// The same interface can be "implemented" more than once in a given class.
+	val my_other_interface_private: IMyOtherInterface impl {
+		type AssociatedType = u8;
+
+		fn myMethod3(value: AssociatedType) {
+			...
+		}
+
+		fn myMethod4() -> AssociatedType {
+			...
+		}
+	};
+
+	static var times_built: u32;
+
+	val my_prop_1: u32;
+	val my_prop_2: u32;
+
+	static out val default: IDefault impl {
+		static fn default() -> Self {
+			// "Self" refers to the static companion class of the current class.
+			Self.times_built += 1;
+
+			Self {
+				my_prop_1: 4,
+				my_prop_2: 2,
+
+				// "IMyInterface" refers to the static companion class of "IMyInterface".
+				my_interface: IMyInterface.new(),
+
+				// ".." is the spread operator. It automatically fills out all remaining fields with the default values
+				// of each field.
+				..
+			}
+		}
+	}
+}

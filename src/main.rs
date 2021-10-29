@@ -18,7 +18,7 @@ pub mod util;
 fn main() {
     env_logger::init();
 
-    let source = SourceFile::from_file(PathBuf::from("examples/reflect.crew")).unwrap();
+    let source = SourceFile::from_file(PathBuf::from("examples/syn/mod_item.crew")).unwrap();
     let tokens = tokenize_file(&source);
     println!("Tokenized source: {}", tokens);
 }

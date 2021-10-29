@@ -35,6 +35,11 @@ impl Abs {
         self.add(1)
     }
 
+    pub fn between(self, less: Self) -> usize {
+        assert!(less.0 <= self.0);
+        self.0 - less.0
+    }
+
     pub fn prev(self) -> Self {
         self.sub(1)
     }
@@ -68,9 +73,6 @@ impl FolderPos for usize {
 /// Folders a very useful reader-like construct which allow users to procedurally move through an
 /// array from either left-to-right ([RightFolder]) or right-to-left ([LeftFolder]) to accept, replace,
 /// and skip elements from the array to reduce it.
-///
-/// This trait is object-safe, with all of the non-object-safe methods being derived in the [FolderExt]
-/// extension trait.
 pub trait Folder {
     type Item;
 
@@ -78,7 +80,7 @@ pub trait Folder {
 
     fn next_abs_raw(&self) -> usize;
 
-    fn next_loc(&self) -> Abs {
+    fn next_pos(&self) -> Abs {
         (0).as_abs(self)
     }
 
@@ -128,36 +130,7 @@ pub trait Folder {
 
     fn push(&mut self, item: Self::Item);
 
-    // === Simple modification === //
-
-    fn produce(&mut self, count: usize, value: Self::Item) {
-        self.reduce(count, value);
-        self.commit();
-    }
-
-    fn reduce(&mut self, count: usize, value: Self::Item) {
-        assert!(self.remaining() >= count);
-
-        self.omit_many(count - 1);
-        self.proceeding_mut()[0] = value;
-    }
-}
-
-pub trait FolderExt: Folder {
-    fn reader(&mut self) -> FolderReader<'_, Self::Item> {
-        FolderReader {
-            remaining: self.proceeding(),
-            pos: self.next_loc(),
-            prev: None,
-        }
-    }
-
-    fn lookahead<'a, F, R>(&'a mut self, fn_: F) -> R
-    where
-        F: FnOnce(&mut FolderReader<'a, Self::Item>) -> R,
-    {
-        fn_(&mut self.reader())
-    }
+    // === Advanced list modification === //
 
     fn take_drain(&mut self) -> FolderOmitIter<'_, Self> {
         FolderOmitIter::new(self)
@@ -174,9 +147,76 @@ pub trait FolderExt: Folder {
             .take_at(locs.iter().map(move |loc| loc.as_rel_raw(root)))
             .collect_array()
     }
-}
 
-impl<F: ?Sized + Folder> FolderExt for F {}
+    // === Simple modification === //
+
+    fn reduce(&mut self, count: usize, value: Self::Item) {
+        assert!(self.remaining() >= count);
+
+        self.omit_many(count - 1);
+        self.proceeding_mut()[0] = value;
+    }
+
+    fn produce(&mut self, count: usize, value: Self::Item) {
+        self.reduce(count, value);
+        self.commit();
+    }
+
+    // === Reading === //
+
+    fn reader(&mut self) -> FolderReader<'_, Self::Item> {
+        FolderReader::new(self.proceeding(), self.next_pos())
+    }
+
+    fn lookahead<'a, F, R>(&'a mut self, fn_: F) -> R
+    where
+        F: FnOnce(&mut FolderReader<'a, Self::Item>) -> R,
+    {
+        fn_(&mut self.reader())
+    }
+
+    fn lookahead_reduce<F, R>(&mut self, fn_: F) -> bool
+    where
+        F: FnOnce(&mut FolderReader<'_, Self::Item>) -> Option<R>,
+        R: IntoIterator<Item = Self::Item>,
+    {
+        let mut reader = self.reader();
+        let replaced = fn_(&mut reader);
+
+        if let Some(replaced) = replaced {
+            // Get the number of elements read
+            let next_pos = reader.next_pos();
+            drop(reader);
+            let read = next_pos.between(self.next_pos());
+
+            // Reduce the sequence
+            self.omit_many(read);
+            for (idx, item) in replaced.into_iter().enumerate() {
+                assert!(
+                    idx < read,
+                    "Cannot reduce a sequence into more elements than were consumed."
+                );
+                self.push(item);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn lookahead_produce<F, R>(&mut self, fn_: F) -> bool
+    where
+        F: FnOnce(&mut FolderReader<'_, Self::Item>) -> Option<R>,
+        R: IntoIterator<Item = Self::Item>,
+    {
+        if self.lookahead_reduce(fn_) {
+            self.commit();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 pub struct FolderOmitIter<'a, T: ?Sized + Folder> {
     target: &'a mut T,
@@ -266,6 +306,14 @@ impl<T> Clone for FolderReader<'_, T> {
 }
 
 impl<'a, T> FolderReader<'a, T> {
+    pub fn new(remaining: &'a [T], first_pos: Abs) -> Self {
+        Self {
+            remaining,
+            pos: first_pos,
+            prev: None,
+        }
+    }
+
     pub fn prev(&self) -> Option<&'a T> {
         self.prev
     }
@@ -274,8 +322,12 @@ impl<'a, T> FolderReader<'a, T> {
         self.remaining
     }
 
+    pub fn has_prev(&self) -> bool {
+        self.prev.is_some()
+    }
+
     pub fn prev_pos(&self) -> Abs {
-        assert!(self.prev.is_some());
+        assert!(self.has_prev());
         self.pos.prev()
     }
 
