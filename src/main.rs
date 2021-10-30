@@ -19,6 +19,6 @@ fn main() {
     env_logger::init();
 
     let source = SourceFile::from_file(PathBuf::from("examples/syn/mod_item.crew")).unwrap();
-    let tokens = tokenize_file(&source);
+    let tokens = tokenize_file(&mut source.reader());
     println!("Tokenized source: {}", tokens);
 }

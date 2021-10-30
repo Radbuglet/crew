@@ -1,10 +1,6 @@
 use std::mem::MaybeUninit;
 
 pub trait TakeAtExt: Sized + Iterator {
-    fn take_at<I: Iterator<Item = usize>>(self, indices: I) -> TakeAtIter<Self, I>;
-}
-
-impl<T: Sized + Iterator> TakeAtExt for T {
     fn take_at<I: Iterator<Item = usize>>(self, indices: I) -> TakeAtIter<Self, I> {
         TakeAtIter {
             min_idx: 0,
@@ -13,6 +9,8 @@ impl<T: Sized + Iterator> TakeAtExt for T {
         }
     }
 }
+
+impl<T: Sized + Iterator> TakeAtExt for T {}
 
 pub struct TakeAtIter<ISrc, IIdx> {
     min_idx: usize,

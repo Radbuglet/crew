@@ -133,6 +133,18 @@ pub fn util_match_punct_seq<'a>(
     })
 }
 
+pub fn util_punct_seq_matcher<'a>(
+    seq: &'a [PunctChar],
+) -> impl for<'b> Fn(&mut TokenStreamReader<'b>) -> Option<SpanRef<'b>> + 'a {
+    move |reader| util_match_punct_seq(reader, seq)
+}
+
+pub fn util_punct_matcher(
+    punct: PunctChar,
+) -> impl for<'b> Fn(&mut TokenStreamReader<'b>) -> Option<SpanRef<'b>> {
+    move |reader| util_match_punct_seq(reader, &[punct])
+}
+
 pub fn util_match_turbo<'a>(reader: &mut TokenStreamReader<'a>) -> Option<SpanRef<'a>> {
     util_match_punct_seq(reader, TURBO)
 }

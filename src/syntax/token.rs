@@ -27,9 +27,7 @@
 //! attempt to consume "logical lexemes" but enable the user to select which lexemes can be matched
 //! given the specific context of the main [tokenize_file] routine.
 
-use crate::syntax::span::{
-    AsFileReader, CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef,
-};
+use crate::syntax::span::{CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef};
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -62,7 +60,7 @@ impl TokenStream {
         Arc::make_mut(&mut self.tokens)
     }
 
-    pub fn as_vec(self) -> Vec<Token> {
+    pub fn into_vec(self) -> Vec<Token> {
         match Arc::try_unwrap(self.tokens) {
             Ok(vec) => vec,
             Err(arc) => (*arc).clone(),
@@ -463,11 +461,9 @@ enum_categories! {
 }
 // === Tokenizing === //
 
-pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
-    let mut reader = source.reader();
-
+pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
     // Consume any shebang at the beginning of the file.
-    let _ = match_shebang(&mut reader);
+    let _ = match_shebang(reader);
 
     // Start tokenizing
     let mut stack = vec![StackFrame::Group(TokenGroup::new(
@@ -479,7 +475,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
         match stack.last_mut().unwrap() {
             StackFrame::Group(group) => {
                 // Match group delimiters
-                match group_match_delimiter(&mut reader) {
+                match group_match_delimiter(reader) {
                     // Group open
                     Some((delimiter, DelimiterMode::Open)) => {
                         stack.push(StackFrame::Group(TokenGroup::new(
@@ -523,7 +519,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                 debug_assert_ne!(reader.peek(), ReadAtom::Eof);
 
                 // Match string literal start
-                if let Some(token) = group_match_string_start(&mut reader) {
+                if let Some(token) = group_match_string_start(reader) {
                     stack.push(StackFrame::String(token));
                     continue;
                 }
@@ -532,22 +528,22 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                 // We match comments before punctuation because line comments can be parsed as two
                 // '/' puncts back to back and block comments can be parsed as a '/' punct followed
                 // by an '*'.
-                if group_match_line_comment(&mut reader) {
+                if group_match_line_comment(reader) {
                     continue;
                 }
 
-                if group_match_block_comment_start(&mut reader) {
+                if group_match_block_comment_start(reader) {
                     stack.push(StackFrame::BlockComment);
                     continue;
                 }
 
                 // Match whitespace
-                if group_match_whitespace(&mut reader, false) {
+                if group_match_whitespace(reader, false) {
                     continue;
                 }
 
                 // Match identifier
-                if let Some(ident) = group_match_ident(&mut reader) {
+                if let Some(ident) = group_match_ident(reader) {
                     group.tokens_mut().push(Token::Ident(ident));
                     continue;
                 }
@@ -559,15 +555,15 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                         _ => false,
                     };
 
-                    if let Some(punct) = group_match_punct(&mut reader, glued_punct) {
+                    if let Some(punct) = group_match_punct(reader, glued_punct) {
                         group.tokens_mut().push(Token::Punct(punct));
                         continue;
                     }
                 }
 
                 // Match number literal
-                if let Some(num) = group_match_number_lit(&mut reader) {
-                    if group_match_ident(&mut reader.clone()).is_some() {
+                if let Some(num) = group_match_number_lit(reader) {
+                    if reader.peek_ahead(group_match_ident).is_some() {
                         panic!("Unexpected digit at {}", reader.next_loc().pos());
                     }
 
@@ -594,19 +590,19 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                     // Match multiline escape
                     // We match multiline escapes before other character escapes because the latter
                     // does not recognize the newline escape.
-                    if string_match_multiline_escape(&mut reader) {
+                    if string_match_multiline_escape(reader) {
                         continue;
                     }
 
                     // We match escape sequences before any special delimiter characters because the
                     // escape might be for a delimiter.
-                    if let Some(char) = string_match_escape(&mut reader) {
+                    if let Some(char) = string_match_escape(reader) {
                         text.push(char);
                         continue;
                     }
 
                     // Match closing quote
-                    if string_match_end(&mut reader) {
+                    if string_match_end(reader) {
                         if !text.is_empty() {
                             string.parts.push(StringComponent::Literal(text));
                         }
@@ -630,7 +626,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
 
                     // Match placeholder
                     if string.mode == StringMode::Templated
-                        && string_match_placeholder_start(&mut reader)
+                        && string_match_placeholder_start(reader)
                     {
                         if !text.is_empty() {
                             string.parts.push(StringComponent::Literal(text));
@@ -648,7 +644,7 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                     }
 
                     // Match character
-                    if let Some(char) = string_match_char(&mut reader) {
+                    if let Some(char) = string_match_char(reader) {
                         text.push(char);
                         continue;
                     }
@@ -660,12 +656,12 @@ pub fn tokenize_file<R: ?Sized + AsFileReader>(source: &R) -> TokenGroup {
                 }
             }
             StackFrame::BlockComment => {
-                if group_match_block_comment_start(&mut reader) {
+                if group_match_block_comment_start(reader) {
                     stack.push(StackFrame::BlockComment);
                     continue;
                 }
 
-                if comment_match_block_end(&mut reader) {
+                if comment_match_block_end(reader) {
                     stack.pop();
                     continue;
                 }

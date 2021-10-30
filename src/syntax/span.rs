@@ -56,10 +56,8 @@ impl SourceFile {
     pub fn path(&self) -> &Path {
         self.arc.path.as_path()
     }
-}
 
-impl AsFileReader for SourceFile {
-    fn reader(&self) -> FileReader {
+    pub fn reader(&self) -> FileReader {
         FileReader::new(self, &self.arc.bytes, FileLocRaw::HEAD)
     }
 }
@@ -213,10 +211,8 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
             end: self.end,
         }
     }
-}
 
-impl<F: Borrow<SourceFile>> AsFileReader for AnySpan<F> {
-    fn reader(&self) -> FileReader {
+    pub fn reader(&self) -> FileReader {
         FileReader::new(self.file(), self.bytes(), self.start)
     }
 }
@@ -356,10 +352,6 @@ impl PartialOrd for FilePos {
 }
 
 // === Readers === //
-
-pub trait AsFileReader {
-    fn reader(&self) -> FileReader;
-}
 
 #[derive(Clone)]
 struct CharReader<'a> {

@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 /// appropriate diagnostic messages on a grammar mismatch, and recovering to a safer state to continue
 /// parsing.
 ///
-/// ## Extensibility
+/// ## Callbacks over Composition
 ///
 /// This additional responsibility complicates matters when there is overlap between a match function's
 /// grammatical requirements and the grammatical capabilities of subsequent match functions. Consider,
@@ -118,12 +118,20 @@ pub trait LookaheadReader: Clone {
         F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
     {
+        self.lookahead_raw(handler).into_result()
+    }
+
+    fn lookahead_raw<F, R>(&mut self, handler: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+        R: LookaheadResult,
+    {
         let mut lookahead = self.clone();
         let res = handler(&mut lookahead);
         if res.is_truthy() {
             *self = lookahead;
         }
-        res.into_result()
+        res
     }
 
     fn peek_ahead<F, R>(&self, handler: F) -> R::Ret
@@ -144,18 +152,6 @@ pub trait LookaheadReader: Clone {
         }
         found
     }
-
-    fn match_delimited<Elem, FnElem, FnDel>(
-        &mut self,
-        match_elem: FnElem,
-        match_del: FnDel,
-    ) -> DelimitedMatchIter<'_, Self, Elem, FnElem, FnDel>
-    where
-        FnElem: FnMut(&mut Self) -> Elem,
-        FnDel: FnMut(&mut Self) -> bool,
-    {
-        DelimitedMatchIter::new(self, match_elem, match_del)
-    }
 }
 
 pub macro match_choice($reader:expr, $(|$binding:ident| $expr:expr),*$(,)?) {{
@@ -163,7 +159,7 @@ pub macro match_choice($reader:expr, $(|$binding:ident| $expr:expr),*$(,)?) {{
     let mut result = None;
     $(
         if let Some(res) = reader.lookahead(|$binding| $expr) {
-            assert!(result.is_none(), "ICE: Ambiguous pattern!");
+            assert!(result.is_none(), "Ambiguous pattern!");
             result = Some(res);
         }
     )*
@@ -240,13 +236,13 @@ impl<T> LookaheadResult for DirectMatch<T> {
     }
 }
 
-pub trait StreamReader {
+pub trait StreamReader: Sized {
     type Res: StreamResult;
 
     fn consume(&mut self) -> Self::Res;
 
-    fn as_consumer(&mut self) -> StreamConsumer<'_, Self> {
-        StreamConsumer { reader: self }
+    fn as_drain(&mut self) -> StreamDrain<'_, Self> {
+        StreamDrain { reader: self }
     }
 
     fn peek(&self) -> Self::Res
@@ -262,43 +258,18 @@ pub trait StreamReader {
     {
         self.peek().is_present()
     }
-
-    fn as_iter(&self) -> StreamIter<'_, Self> {
-        StreamIter { reader: self }
-    }
 }
 
 #[derive(Debug)]
-pub struct StreamConsumer<'a, R: ?Sized> {
+pub struct StreamDrain<'a, R> {
     pub reader: &'a mut R,
 }
 
-impl<'a, R: ?Sized + StreamReader> Iterator for StreamConsumer<'a, R> {
+impl<'a, R: ?Sized + StreamReader> Iterator for StreamDrain<'a, R> {
     type Item = <R::Res as StreamResult>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.reader.consume().to_item()
-    }
-}
-
-#[derive(Debug)]
-pub struct StreamIter<'a, R: ?Sized> {
-    pub reader: &'a R,
-}
-
-impl<R> Clone for StreamIter<'_, R> {
-    fn clone(&self) -> Self {
-        Self {
-            reader: self.reader,
-        }
-    }
-}
-
-impl<'a, R: ?Sized + StreamReader + LookaheadReader> Iterator for StreamIter<'a, R> {
-    type Item = <R::Res as StreamResult>::Item;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.reader.peek().to_item()
     }
 }
 
@@ -336,64 +307,43 @@ impl<T, E> StreamResult for Result<Option<T>, E> {
     }
 }
 
-pub struct DelimitedMatchIter<'a, Reader, Elem, FnElem, FnDel>
-where
-    Reader: LookaheadReader,
-    FnElem: FnMut(&mut Reader) -> Elem,
-    FnDel: FnMut(&mut Reader) -> bool,
-{
-    _ty: PhantomData<fn() -> Reader>,
-    reader: &'a mut Reader,
+pub struct DelimiterMatcher<Reader, FDel, Res> {
+    _sig: PhantomData<fn(&mut Reader) -> Res>,
+    match_del: FDel,
     first: bool,
-    match_elem: FnElem,
-    match_del: FnDel,
 }
 
-impl<'a, Reader, Elem, FnElem, FnDel> DelimitedMatchIter<'a, Reader, Elem, FnElem, FnDel>
+impl<Reader, FDel, Res> DelimiterMatcher<Reader, FDel, Res>
 where
     Reader: LookaheadReader,
-    FnElem: FnMut(&mut Reader) -> Elem,
-    FnDel: FnMut(&mut Reader) -> bool,
+    FDel: FnMut(&mut Reader) -> Res,
+    Res: LookaheadResult,
+    Res::Ret: Default,
 {
-    pub fn new(reader: &'a mut Reader, match_elem: FnElem, match_del: FnDel) -> Self {
+    pub fn new(match_del: FDel, require_leading: bool) -> Self {
         Self {
-            _ty: PhantomData,
-            reader,
-            first: false,
-            match_elem,
+            _sig: PhantomData,
             match_del,
+            first: !require_leading,
         }
     }
-}
 
-impl<'a, Reader, Elem, FnElem, FnDel> Iterator
-    for DelimitedMatchIter<'a, Reader, Elem, FnElem, FnDel>
-where
-    Reader: LookaheadReader,
-    FnElem: FnMut(&mut Reader) -> Elem,
-    FnDel: FnMut(&mut Reader) -> bool,
-{
-    type Item = Elem;
+    pub fn new_start(match_del: FDel) -> Self {
+        Self::new(match_del, false)
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::Ret> {
         if self.first {
-            if !self.reader.lookahead(&mut self.match_del) {
-                return None;
-            }
             self.first = false;
+            Some(Default::default())
+        } else {
+            let res = reader.lookahead_raw(&mut self.match_del);
+            if res.is_truthy() {
+                Some(res.into_result())
+            } else {
+                None
+            }
         }
-        Some((self.match_elem)(&mut self.reader))
-    }
-}
-
-impl<'a, Reader, Elem, FnElem, FnDel> Drop for DelimitedMatchIter<'a, Reader, Elem, FnElem, FnDel>
-where
-    Reader: LookaheadReader,
-    FnElem: FnMut(&mut Reader) -> Elem,
-    FnDel: FnMut(&mut Reader) -> bool,
-{
-    fn drop(&mut self) {
-        while self.next().is_some() {}
     }
 }
 

@@ -28,8 +28,9 @@
 - [ ] The backing system for `Spans` should be generic and lifetimes should be maximized.
 - [ ] Ideally, we could optimize trees by representing them as state machines.
 - [ ] We create a lot of temporaries unnecessarily.
-- [ ] Readers have very bad match on error semantics.
-- [ ] `TokenStreams` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
+- [ ] We should start implementing non-panic diagnostics.
+- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly colored code samples.
+- [ ] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
 - [ ] `TokenStreams` should also have a slice type.
 
 ## Tokenizer
