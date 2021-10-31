@@ -5,7 +5,7 @@
 - [x] Trace logging
 - [ ] Efficient data structures:
   - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
-  - [ ] Fork allocation primitives
+  - [ ] Fork `std` collections
   - [ ] Interner
 - [x] Macro to automate object category generation
 - [ ] Create in-place array folding mechanisms:
@@ -25,7 +25,6 @@
 - [ ] We should make some more `Reader` adapters
 - [ ] `Folders` should support the closure-return system
 - [ ] The `Folder` API can be improved significantly.
-- [ ] The backing system for `Spans` should be generic and lifetimes should be maximized.
 - [ ] Ideally, we could optimize trees by representing them as state machines.
 - [ ] We create a lot of temporaries unnecessarily.
 - [ ] We should start implementing non-panic diagnostics.

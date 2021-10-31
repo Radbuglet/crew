@@ -27,7 +27,7 @@
 //! attempt to consume "logical lexemes" but enable the user to select which lexemes can be matched
 //! given the specific context of the main [tokenize_file] routine.
 
-use crate::syntax::span::{CharOrEof, FileLoc, FileLocRef, FileReader, ReadAtom, Span, SpanRef};
+use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -106,16 +106,16 @@ impl<'a> TokenStreamReader<'a> {
         self.tokens
     }
 
-    pub fn next_span(&self) -> Option<SpanRef<'a>> {
+    pub fn next_span(&self) -> Option<Span> {
         self.peek().map(|token| token.as_any().full_span())
     }
 
-    pub fn prev_span(&self) -> Option<SpanRef<'a>> {
+    pub fn prev_span(&self) -> Option<Span> {
         self.prev().map(|token| token.as_any().full_span())
     }
 
     pub fn last_loc(&self) -> Option<FileLoc> {
-        self.prev_span().map(|span| span.end().as_owned())
+        self.prev_span().map(|span| span.end())
     }
 }
 
@@ -138,7 +138,7 @@ impl LookaheadReader for TokenStreamReader<'_> {}
 // === IR === //
 
 pub trait AnyToken: Display {
-    fn full_span(&self) -> SpanRef;
+    fn full_span(&self) -> Span;
 }
 
 enum_categories! {
@@ -188,18 +188,18 @@ impl TokenGroup {
         self.stream.tokens_mut()
     }
 
-    pub fn opening_brace(&self) -> FileLocRef {
+    pub fn opening_brace(&self) -> FileLoc {
         self.span.start()
     }
 
-    pub fn closing_brace(&self) -> FileLocRef {
+    pub fn closing_brace(&self) -> FileLoc {
         self.span.end()
     }
 }
 
 impl AnyToken for TokenGroup {
-    fn full_span(&self) -> SpanRef {
-        self.span.as_ref()
+    fn full_span(&self) -> Span {
+        self.span.clone()
     }
 }
 
@@ -210,8 +210,8 @@ pub struct TokenIdent {
 }
 
 impl AnyToken for TokenIdent {
-    fn full_span(&self) -> SpanRef {
-        self.span.as_ref()
+    fn full_span(&self) -> Span {
+        self.span.clone()
     }
 }
 
@@ -223,8 +223,8 @@ pub struct TokenPunct {
 }
 
 impl AnyToken for TokenPunct {
-    fn full_span(&self) -> SpanRef {
-        SpanRef::new(&self.loc, &self.loc)
+    fn full_span(&self) -> Span {
+        Span::new(&self.loc, &self.loc)
     }
 }
 
@@ -236,8 +236,8 @@ pub struct TokenStringLit {
 }
 
 impl AnyToken for TokenStringLit {
-    fn full_span(&self) -> SpanRef {
-        self.span.as_ref()
+    fn full_span(&self) -> Span {
+        self.span.clone()
     }
 }
 
@@ -256,8 +256,8 @@ pub struct TokenNumberLit {
 }
 
 impl AnyToken for TokenNumberLit {
-    fn full_span(&self) -> SpanRef {
-        self.span.as_ref()
+    fn full_span(&self) -> Span {
+        self.span.clone()
     }
 }
 
@@ -467,7 +467,7 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
 
     // Start tokenizing
     let mut stack = vec![StackFrame::Group(TokenGroup::new(
-        reader.next_loc().as_span().as_owned(),
+        reader.next_loc().as_span(),
         GroupDelimiter::File,
     ))];
 
@@ -479,7 +479,7 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
                     // Group open
                     Some((delimiter, DelimiterMode::Open)) => {
                         stack.push(StackFrame::Group(TokenGroup::new(
-                            reader.next_loc().as_span().as_owned(),
+                            reader.next_loc().as_span(),
                             delimiter,
                         )));
                         continue;
@@ -774,7 +774,7 @@ pub fn group_match_punct(reader: &mut FileReader, is_glued: bool) -> Option<Toke
         let char = PunctChar::find_where(move |_, codepoint| read == *codepoint)?;
 
         Some(TokenPunct {
-            loc: start.as_owned(),
+            loc: start,
             is_glued,
             char,
         })
@@ -923,7 +923,7 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
 
         Some(TokenNumberLit {
             prefix,
-            span: Span::new(&start, &reader.prev_loc().as_owned()),
+            span: Span::new(&start, &reader.prev_loc()),
             int_part,
             float_part,
         })

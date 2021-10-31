@@ -1,3 +1,4 @@
+use crate::util::backing::Take;
 use crate::util::reader::{LookaheadReader, StreamReader, StreamResult};
 use core::str::next_code_point;
 use std::borrow::Borrow;
@@ -26,7 +27,7 @@ struct SourceFileInner {
 impl SourceFile {
     pub fn dummy() -> (Self, Span, FileLoc) {
         let file = SourceFile::from_bytes("DUMMY_FILE".into(), Vec::new());
-        let loc = file.head().as_owned();
+        let loc = file.head();
         let span = Span::new(&loc, &loc);
         (file, span, loc)
     }
@@ -46,9 +47,9 @@ impl SourceFile {
         }
     }
 
-    pub fn head(&self) -> FileLocRef {
-        FileLocRef {
-            file: self,
+    pub fn head(&self) -> FileLoc {
+        FileLoc {
+            file: self.clone(),
             raw: FileLocRaw::HEAD,
         }
     }
@@ -83,17 +84,14 @@ impl Debug for SourceFile {
     }
 }
 
-pub type Span = AnySpan<SourceFile>;
-pub type SpanRef<'a> = AnySpan<&'a SourceFile>;
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct AnySpan<F> {
-    file: F,
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct Span {
+    file: SourceFile,
     start: FileLocRaw,
     end: FileLocRaw,
 }
 
-impl<F: Borrow<SourceFile>> Display for AnySpan<F> {
+impl Display for Span {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
@@ -106,21 +104,9 @@ impl<F: Borrow<SourceFile>> Display for AnySpan<F> {
 }
 
 impl Span {
-    pub fn new<FA, FB>(a: &AnyFileLoc<FA>, b: &AnyFileLoc<FB>) -> Self
-    where
-        FA: Borrow<SourceFile>,
-        FB: Borrow<SourceFile>,
-    {
-        SpanRef::new(a, b).as_owned()
-    }
-}
+    pub fn new<A: Take<FileLoc>, B: Take<FileLoc>>(a: A, b: B) -> Self {
+        let (a, b) = (a.take(), b.as_ref());
 
-impl<'a> SpanRef<'a> {
-    pub fn new<FA, FB>(a: &'a AnyFileLoc<FA>, b: &AnyFileLoc<FB>) -> Self
-    where
-        FA: Borrow<SourceFile>,
-        FB: Borrow<SourceFile>,
-    {
         assert_eq!(
             a.file(),
             b.file(),
@@ -131,20 +117,20 @@ impl<'a> SpanRef<'a> {
         locs.sort();
 
         Self {
-            file: a.file(),
+            file: a.file,
             start: locs[0],
             end: locs[1],
         }
     }
 }
 
-impl<F: Borrow<SourceFile>> AnySpan<F> {
+impl Span {
     pub fn file(&self) -> &SourceFile {
-        self.file.borrow()
+        &self.file
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.file().arc.bytes[self.start.index..=self.end.index]
+        &self.file.arc.bytes[self.start.index..=self.end.index]
     }
 
     pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
@@ -155,16 +141,16 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.try_as_str().unwrap()
     }
 
-    pub fn start(&self) -> FileLocRef {
-        FileLocRef {
-            file: self.file(),
+    pub fn start(&self) -> FileLoc {
+        FileLoc {
+            file: self.file().clone(),
             raw: self.start,
         }
     }
 
-    pub fn end(&self) -> FileLocRef {
-        FileLocRef {
-            file: self.file(),
+    pub fn end(&self) -> FileLoc {
+        FileLoc {
+            file: self.file().clone(),
             raw: self.end,
         }
     }
@@ -176,7 +162,8 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.end = locs[1];
     }
 
-    pub fn set_start<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    pub fn set_start<L: Take<FileLoc>>(&mut self, loc: L) {
+        let loc = loc.as_ref();
         assert_eq!(
             loc.file(),
             self.file(),
@@ -186,7 +173,8 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.set_pair_unchecked(loc.raw, self.end);
     }
 
-    pub fn set_end<FA: Borrow<SourceFile>>(&mut self, loc: &AnyFileLoc<FA>) {
+    pub fn set_end<L: Take<FileLoc>>(&mut self, loc: L) {
+        let loc = loc.as_ref();
         assert_eq!(
             loc.file(),
             self.file(),
@@ -196,37 +184,18 @@ impl<F: Borrow<SourceFile>> AnySpan<F> {
         self.set_pair_unchecked(self.start, loc.raw);
     }
 
-    pub fn as_ref(&self) -> SpanRef {
-        SpanRef {
-            file: self.file(),
-            start: self.start,
-            end: self.end,
-        }
-    }
-
-    pub fn as_owned(&self) -> Span {
-        Span {
-            file: self.file().clone(),
-            start: self.start,
-            end: self.end,
-        }
-    }
-
     pub fn reader(&self) -> FileReader {
         FileReader::new(self.file(), self.bytes(), self.start)
     }
 }
 
-pub type FileLoc = AnyFileLoc<SourceFile>;
-pub type FileLocRef<'a> = AnyFileLoc<&'a SourceFile>;
-
-#[derive(Debug, Copy, Clone, Hash)]
-pub struct AnyFileLoc<F> {
-    file: F,
+#[derive(Debug, Clone, Hash)]
+pub struct FileLoc {
+    file: SourceFile,
     raw: FileLocRaw,
 }
 
-impl<F> AnyFileLoc<F> {
+impl FileLoc {
     pub fn pos(&self) -> FilePos {
         self.raw.pos
     }
@@ -238,40 +207,24 @@ impl<F> AnyFileLoc<F> {
     pub fn col(&self) -> usize {
         self.raw.col()
     }
-}
 
-impl<F: Borrow<SourceFile>> AnyFileLoc<F> {
     pub fn file(&self) -> &SourceFile {
         self.file.borrow()
     }
 
-    pub fn as_span(&self) -> SpanRef {
-        SpanRef::new(self, self)
-    }
-
-    pub fn as_ref(&self) -> FileLocRef {
-        FileLocRef {
-            file: self.file(),
-            raw: self.raw,
-        }
-    }
-
-    pub fn as_owned(&self) -> FileLoc {
-        FileLoc {
-            file: self.file().clone(),
-            raw: self.raw,
-        }
+    pub fn as_span(&self) -> Span {
+        Span::new(self, self)
     }
 }
 
-impl<F: Borrow<SourceFile>> Eq for AnyFileLoc<F> {}
-impl<F: Borrow<SourceFile>> PartialEq for AnyFileLoc<F> {
+impl Eq for FileLoc {}
+impl PartialEq for FileLoc {
     fn eq(&self, other: &Self) -> bool {
         self.file() == other.file() && self.raw == other.raw
     }
 }
 
-impl<F: Borrow<SourceFile>> PartialOrd<Self> for AnyFileLoc<F> {
+impl PartialOrd<Self> for FileLoc {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.file() == other.file() {
             Some(self.raw.index.cmp(&other.raw.index))
@@ -281,7 +234,7 @@ impl<F: Borrow<SourceFile>> PartialOrd<Self> for AnyFileLoc<F> {
     }
 }
 
-impl<F: Borrow<SourceFile>> Display for AnyFileLoc<F> {
+impl Display for FileLoc {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}@{:?}", self.raw.pos, self.file.borrow().path())
     }
@@ -451,9 +404,9 @@ impl<'a> FileReader<'a> {
     }
 
     /// Returns the location of the most recently read atom.
-    pub fn prev_loc(&self) -> FileLocRef<'a> {
-        FileLocRef {
-            file: self.file,
+    pub fn prev_loc(&self) -> FileLoc {
+        FileLoc {
+            file: self.file().clone(),
             raw: FileLocRaw {
                 index: self.reader.index() - 1,
                 pos: self.next_pos,
@@ -462,9 +415,9 @@ impl<'a> FileReader<'a> {
     }
 
     /// Returns the location of the atom about to be consumed.
-    pub fn next_loc(&self) -> FileLocRef<'a> {
-        FileLocRef {
-            file: self.file,
+    pub fn next_loc(&self) -> FileLoc {
+        FileLoc {
+            file: self.file().clone(),
             raw: FileLocRaw {
                 index: self.reader.index(),
                 pos: self.next_pos,

@@ -1,4 +1,4 @@
-use crate::syntax::span::SpanRef;
+use crate::syntax::span::Span;
 use crate::syntax::token::{
     GroupDelimiter, PunctChar, TokenGroup, TokenIdent, TokenPunct, TokenStreamReader,
 };
@@ -116,7 +116,7 @@ pub fn util_match_punct<'a>(
 pub fn util_match_punct_seq<'a>(
     reader: &mut TokenStreamReader<'a>,
     seq: &[PunctChar],
-) -> Option<SpanRef<'a>> {
+) -> Option<Span> {
     assert!(!seq.is_empty());
 
     reader.lookahead(|reader| {
@@ -135,16 +135,14 @@ pub fn util_match_punct_seq<'a>(
 
 pub fn util_punct_seq_matcher<'a>(
     seq: &'a [PunctChar],
-) -> impl for<'b> Fn(&mut TokenStreamReader<'b>) -> Option<SpanRef<'b>> + 'a {
+) -> impl Fn(&mut TokenStreamReader) -> Option<Span> + 'a {
     move |reader| util_match_punct_seq(reader, seq)
 }
 
-pub fn util_punct_matcher(
-    punct: PunctChar,
-) -> impl for<'b> Fn(&mut TokenStreamReader<'b>) -> Option<SpanRef<'b>> {
+pub fn util_punct_matcher(punct: PunctChar) -> impl Fn(&mut TokenStreamReader) -> Option<Span> {
     move |reader| util_match_punct_seq(reader, &[punct])
 }
 
-pub fn util_match_turbo<'a>(reader: &mut TokenStreamReader<'a>) -> Option<SpanRef<'a>> {
+pub fn util_match_turbo(reader: &mut TokenStreamReader) -> Option<Span> {
     util_match_punct_seq(reader, TURBO)
 }
