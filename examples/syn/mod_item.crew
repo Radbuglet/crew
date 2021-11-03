@@ -1,26 +1,27 @@
 //! A module comment
+@!doc("Manual version of that comment")
 
 pub(
 	::some::module::here,
 	^^::another::path,
-	wild::cards::and::inner::super::^^^::^::*,
+    wild::cards::and::inner::super::^^^::^::*,
 	self::specific::qualification,
-	foo::bar::self::baz,
-	this::{is::{a::tree}, of::{paths}, valid::{in::only::{some::contexts, *}}},
-	{wow::these::{are, basically::lists, *}, intervention::when::*, {{{{this::is, technically, {legal::*}}}}}},
+	foo::bar::baz,
+	this::{is_::{a::tree}, of::{paths}, valid::{in_::only::{some::contexts, *}}},
+	{wow::these::{are, basically::lists, *}, intervention::when::*, {{{{this::is_, technically, {legal::*}}}}}},
 	crate::*,
 	crate::{{*}, *},
 ) {
-	fn we() {}
+	mod we {}
 
-	@AttributesCanBeAppliedToBlocksToo
+	@AttributesCanBeAppliedToBlocksToo(this token tree is passed directly to the user)
 	pub() {
-		fn all() {}
-		fn inherit() {}
+		mod all;
+		mod inherit;
 	}
-	fn the() {}
-	fn parent() {}
-	fn qualifier() {}
+	mod the;
+	mod parent;
+	mod qualifier;
 
 	@ThisIsANormalAttribute
 	mod nesting {
@@ -36,22 +37,22 @@ pub(
 		{
 			/// Why did I make this syntax so flexible?!
 			@look_ma::no_additional::qualifiers { ... }
-			pub(we, have::not, tested, these, in, a, while)
+			pub(we, have::not, tested, these, in_, a, while_)
 			pub(oh, yeah, we, can, have, multiple, on, a, single, block)
 			{
-				use super::another::path::example;
+				mod foo;
 			}
 
-			use foo;
+			mod bar;
 		}
 	}
 }
 
 @ThisSyntaxIsWeird {
 	@Like::^::Really
-	fn why() {}
+	mod why;
 
-	pub fn poor_parser() {}
+	mod poor_parser;
 }
 
 //> Regions should not distribute
@@ -59,14 +60,9 @@ pub(
 /// This doc comment should (Note: we can't put a region in between these)
 /// also, we're multiline.
 {
-	fn foo() {}
-	fn bar() {}
+	mod foo {}
+	mod bar {}
 }
-
-use ::{
-	foo::bar::^^::baz::^::{a as b, c},
-	wildcard::is::sometimes::{*, valid as foo},
-};
 
 @ModPath("but_link_here_pls.crew")
 mod load_another_file_pls;

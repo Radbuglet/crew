@@ -100,8 +100,6 @@ use std::marker::PhantomData;
 /// error so it may be useful to think of the root-level return value of a match function as
 /// indicating syntactic *intent* instead of syntactic *validity*.
 ///
-/// TODO: The way we interpret LookaheadResults might cause bugs. e.g. returning Err(...) when you wanted to return DirectMatch(Err(...))
-///
 /// ## Optimization
 ///
 /// TODO: Minimizing backtracking
@@ -142,13 +140,25 @@ pub trait LookaheadReader: Clone {
         handler(&mut self.clone()).into_result()
     }
 
-    fn consume_while<F>(&mut self, mut handler: F) -> usize
+    fn consume_while<F, R>(&mut self, mut handler: F) -> usize
     where
-        F: FnMut(&mut Self) -> bool,
+        F: FnMut(&mut Self) -> R,
+        R: LookaheadResult,
+        R::Ret: RepFlowIndicator,
     {
         let mut found = 0;
-        while self.lookahead(&mut handler) {
-            found += 1;
+        loop {
+            let res = self.lookahead_raw(&mut handler);
+
+            // Only count successful matches
+            if res.is_truthy() {
+                found += 1;
+            }
+
+            // Only continue if asked
+            if !res.into_result().should_continue() {
+                break;
+            }
         }
         found
     }
@@ -221,18 +231,38 @@ impl<T> LookaheadResult for (bool, T) {
     }
 }
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DirectMatch<T>(pub T);
+pub trait RepFlowIndicator: Sized {
+    fn should_continue(self) -> bool;
+}
 
-impl<T> LookaheadResult for DirectMatch<T> {
-    type Ret = T;
+impl RepFlowIndicator for bool {
+    fn should_continue(self) -> bool {
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum RepFlow {
+    Continue,
+    Finish,
+    Reject,
+}
+
+impl RepFlowIndicator for RepFlow {
+    fn should_continue(self) -> bool {
+        self == Self::Continue
+    }
+}
+
+impl LookaheadResult for RepFlow {
+    type Ret = Self;
 
     fn is_truthy(&self) -> bool {
-        true
+        *self != Self::Reject
     }
 
     fn into_result(self) -> Self::Ret {
-        self.0
+        self
     }
 }
 

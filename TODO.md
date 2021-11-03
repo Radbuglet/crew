@@ -27,7 +27,7 @@
 - [ ] The `Folder` API can be improved significantly.
 - [ ] Ideally, we could optimize trees by representing them as state machines.
 - [ ] We create a lot of temporaries unnecessarily.
-- [ ] We should start implementing non-panic diagnostics.
+- [ ] Parsing loads the entire file into memory
 - [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly colored code samples.
 - [ ] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
 - [ ] `TokenStreams` should also have a slice type.

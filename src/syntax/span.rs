@@ -32,7 +32,7 @@ impl SourceFile {
         (file, span, loc)
     }
 
-    pub fn from_str(path: String, contents: String) -> Self {
+    pub fn from_str(path: &str, contents: String) -> Self {
         Self::from_bytes(path.into(), contents.into_bytes())
     }
 

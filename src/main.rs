@@ -8,6 +8,7 @@
 #![feature(str_internals)]
 #![feature(unsize)]
 
+use crate::syntax::parse::module::AstModule;
 use crate::syntax::span::SourceFile;
 use crate::syntax::token::tokenize_file;
 use std::path::PathBuf;
@@ -21,4 +22,7 @@ fn main() {
     let source = SourceFile::from_file(PathBuf::from("examples/syn/mod_item.crew")).unwrap();
     let tokens = tokenize_file(&mut source.reader());
     println!("Tokenized source: {}", tokens);
+
+    let mod_ = AstModule::parse(&mut tokens.stream.reader());
+    println!("Parsed source: {:#?}", mod_);
 }
