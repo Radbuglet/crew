@@ -52,7 +52,7 @@ impl TokenStream {
         }
     }
 
-    pub fn tokens(&self) -> &Vec<Token> {
+    pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
 
@@ -65,10 +65,6 @@ impl TokenStream {
             Ok(vec) => vec,
             Err(arc) => (*arc).clone(),
         }
-    }
-
-    pub fn reader(&self) -> TokenStreamReader<'_> {
-        TokenStreamReader::new(self.tokens())
     }
 }
 
@@ -89,13 +85,18 @@ impl<'a> IntoIterator for &'a TokenStream {
 
 #[derive(Debug, Clone)]
 pub struct TokenStreamReader<'a> {
+    span: Span,
     tokens: &'a [Token],
     prev: Option<&'a Token>,
 }
 
 impl<'a> TokenStreamReader<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
-        Self { tokens, prev: None }
+    pub fn new(span: Span, tokens: &'a [Token]) -> Self {
+        Self {
+            span,
+            tokens,
+            prev: None,
+        }
     }
 
     pub fn prev(&self) -> Option<&'a Token> {
@@ -106,16 +107,18 @@ impl<'a> TokenStreamReader<'a> {
         self.tokens
     }
 
-    pub fn next_span(&self) -> Option<Span> {
-        self.peek().map(|token| token.as_any().full_span())
+    pub fn next_loc(&self) -> FileLoc {
+        match self.peek() {
+            Some(next) => next.full_span().start(),
+            None => self.span.end(),
+        }
     }
 
-    pub fn prev_span(&self) -> Option<Span> {
-        self.prev().map(|token| token.as_any().full_span())
-    }
-
-    pub fn last_loc(&self) -> Option<FileLoc> {
-        self.prev_span().map(|span| span.end())
+    pub fn prev_loc(&self) -> FileLoc {
+        match self.prev() {
+            Some(prev) => prev.full_span().end(),
+            None => self.span.start(),
+        }
     }
 }
 
@@ -162,6 +165,10 @@ impl Token {
             Token::NumberLit(number) => number as _,
         }
     }
+
+    pub fn full_span(&self) -> Span {
+        self.as_any().full_span()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -180,7 +187,7 @@ impl TokenGroup {
         }
     }
 
-    pub fn tokens(&self) -> &Vec<Token> {
+    pub fn tokens(&self) -> &[Token] {
         self.stream.tokens()
     }
 
@@ -194,6 +201,10 @@ impl TokenGroup {
 
     pub fn closing_brace(&self) -> FileLoc {
         self.span.end()
+    }
+
+    pub fn reader(&self) -> TokenStreamReader<'_> {
+        TokenStreamReader::new(self.span.clone(), self.stream.tokens())
     }
 }
 
@@ -311,8 +322,8 @@ enum_meta! {
         Period = '.',
         Question = '?',
         Slash = '/',
-        Le = '<',
-        Ge = '>',
+        Less = '<',
+        Greater = '>',
     }
 
     #[derive(Debug)]

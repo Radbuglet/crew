@@ -40,7 +40,7 @@ pub(
 			pub(we, have::not, tested, these, in_, a, while_)
 			pub(oh, yeah, we, can, have, multiple, on, a, single, block)
 			{
-				mod foo;
+				use ^^::foo::bar;
 			}
 
 			mod bar;

@@ -114,12 +114,12 @@ impl AstPathPart {
 // === Expr paths === //
 
 #[derive(Debug, Clone)]
-pub struct AstDirectPath {
+pub struct AstPathDirect {
     pub root: AstPathRoot,
     pub parts: Vec<AstPathPart>,
 }
 
-impl AstDirectPath {
+impl AstPathDirect {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match root
@@ -241,7 +241,7 @@ impl AstPathTerminator {
             // Tree
             |reader| if let Some(group) = util_match_group_delimited(reader, GroupDelimiter::Brace)
             {
-                let mut reader = group.stream.reader();
+                let mut reader = group.reader();
                 let mut nodes = Vec::new();
 
                 // Match interior list

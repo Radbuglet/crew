@@ -19,10 +19,10 @@ pub mod util;
 fn main() {
     env_logger::init();
 
-    let source = SourceFile::from_file(PathBuf::from("examples/syn/mod_item.crew")).unwrap();
+    let source = SourceFile::from_file(PathBuf::from("examples/syn/class.crew")).unwrap();
     let tokens = tokenize_file(&mut source.reader());
     println!("Tokenized source: {}", tokens);
 
-    let mod_ = AstModule::parse(&mut tokens.stream.reader());
-    println!("Parsed source: {:#?}", mod_);
+    let parsed = AstModule::parse(&mut tokens.reader());
+    println!("Parsed source: {:#?}", parsed);
 }

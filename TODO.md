@@ -23,13 +23,13 @@
 - [ ] Enum meta and object categories should support generics
 - [ ] `Readers` should support mutable semantics
 - [ ] We should make some more `Reader` adapters
+- [ ] We should really look into the efficiency of `Reader` backtracking.
 - [ ] `Folders` should support the closure-return system
 - [ ] The `Folder` API can be improved significantly.
-- [ ] Ideally, we could optimize trees by representing them as state machines.
-- [ ] We create a lot of temporaries unnecessarily.
-- [ ] Parsing loads the entire file into memory
-- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly colored code samples.
-- [ ] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
+- [ ] We should move to a component-based allocation scheme to reduce the number of times we recreate objects.
+- [ ] Parsing loads the entire file into memory.
+- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples.
+- [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
 - [ ] `TokenStreams` should also have a slice type.
 
 ## Tokenizer
@@ -52,11 +52,10 @@
 
 ## Parser
 
-- [ ] Define expression AST
-- [ ] Implement expression parsing
-- [ ] Define scopes and their parsing
-- [ ] Define modules and their parsing
-- [ ] Implement diagnostic and error recovery system
+- [ ] Implement simple "production rules" style grammar.
+- [ ] Implement diagnostic and error recovery system.
+- [ ] Optimize matching system
+- [ ] Track source spans for diagnostics later on.
 - [ ] Test suite
 
 # Feature Wishlist

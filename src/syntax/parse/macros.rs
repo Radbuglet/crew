@@ -1,11 +1,11 @@
-use crate::syntax::parse::path::AstDirectPath;
+use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{util_match_group, util_match_punct};
 use crate::syntax::token::{PunctChar, TokenGroup, TokenStreamReader};
 use crate::util::reader::LookaheadReader;
 
 #[derive(Debug, Clone)]
 pub struct AstAnyAttrMacro {
-    pub path: AstDirectPath,
+    pub path: AstPathDirect,
     pub arg: Option<TokenGroup>,
 }
 
@@ -19,7 +19,7 @@ impl AstAnyAttrMacro {
             let is_inner = util_match_punct(reader, PunctChar::Exclamation, None).is_some();
 
             // Match path to target attribute
-            let path = AstDirectPath::parse(reader)?;
+            let path = AstPathDirect::parse(reader)?;
 
             // Match optional opaque token group passed directly to the macro.
             let arg = util_match_group(reader).map(Clone::clone);

@@ -8,8 +8,6 @@ use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
 use crate::util::enum_utils::{enum_categories, VariantOf};
 use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, StreamReader};
 
-// === Modules === //
-
 #[derive(Debug, Clone)]
 pub struct AstModule {
     pub inner_attrs: Vec<AstAnyAttrMacro>,
@@ -64,7 +62,7 @@ impl AstModule {
             });
 
             // Expect EOF
-            if !reader.peek().is_none() {
+            if !reader.consume().is_none() {
                 return None;
             }
 
@@ -79,11 +77,14 @@ pub struct AstModItem {
     pub kind: AstModItemKind,
 }
 
+// === Item kinds === //
+
 enum_categories! {
     #[derive(Debug, Clone)]
     pub enum AstModItemKind {
         Mod(AstModModule),
         Block(AstModBlock),
+        Use(AstModUse),
     }
 }
 
@@ -92,7 +93,8 @@ impl AstModItemKind {
         match_choice!(
             reader,
             |reader| Some(AstModModule::parse(reader)?.wrap()),
-            |reader| Some(AstModBlock::parse(reader)?.wrap())
+            |reader| Some(AstModBlock::parse(reader)?.wrap()),
+            |reader| Some(AstModUse::parse(reader)?.wrap()),
         )
     }
 }
@@ -116,7 +118,7 @@ impl AstModModule {
 
             // Match inline contents
             let inline = match util_match_group_delimited(reader, GroupDelimiter::Brace) {
-                Some(brace) => Some(AstModule::parse(&mut brace.stream.reader())?),
+                Some(brace) => Some(AstModule::parse(&mut brace.reader())?),
                 None => None,
             };
 
@@ -142,11 +144,48 @@ impl AstModBlock {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
-            let parts = AstModule::parse_parts(&mut group.stream.reader())?;
+            let parts = AstModule::parse_parts(&mut group.reader())?;
 
             Some(Self { parts })
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstModUse {
+    pub path: AstPathTree,
+}
+
+impl AstModUse {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| {
+            // Match "use"
+            if !util_match_specific_kw(reader, AstKeyword::Use) {
+                return None;
+            }
+
+            // Match tree
+            let path = AstPathTree::parse(reader)?;
+
+            // Match semicolon
+            let _ = util_match_punct(reader, PunctChar::Semicolon, None)?;
+
+            Some(Self { path })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstModObject {
+    kind: AstModObjectKind,
+    name: String,
+    items: (),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum AstModObjectKind {
+    Class,
+    Struct,
 }
 
 // === Qualifiers === //
@@ -186,7 +225,10 @@ impl AstModVisQualifier {
             let mut visible_to = Vec::new();
             if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
                 // TODO: We should probably add a generic list parser.
-                let mut reader = paren.stream.reader();
+                // ^ This idiom shows up everywhere but I don't yet know how to make a proper abstraction
+                // for it.
+
+                let mut reader = paren.reader();
 
                 // Match interior list
                 let mut delimited =

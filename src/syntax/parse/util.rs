@@ -120,7 +120,7 @@ pub fn util_match_punct_seq<'a>(
     assert!(!seq.is_empty());
 
     reader.lookahead(|reader| {
-        let mut span = reader.next_span()?;
+        let start = reader.next_loc();
         let mut glued = None;
         for char in seq {
             if util_match_punct(reader, *char, glued).is_none() {
@@ -128,8 +128,8 @@ pub fn util_match_punct_seq<'a>(
             }
             glued = Some(true);
         }
-        span.set_end(&reader.last_loc().unwrap());
-        Some(span)
+
+        Some(Span::new(start, reader.prev_loc()))
     })
 }
 
