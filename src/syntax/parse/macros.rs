@@ -28,3 +28,17 @@ impl AstAnyAttrMacro {
         })
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct AstAttrQualifier {
+    pub attr: AstAnyAttrMacro,
+}
+
+impl AstAttrQualifier {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| match AstAnyAttrMacro::parse(reader) {
+            Some((false, attr)) => Some(Self { attr }),
+            _ => None,
+        })
+    }
+}

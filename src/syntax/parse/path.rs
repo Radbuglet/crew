@@ -164,6 +164,36 @@ impl AstPathTree {
             Some(Self { root, node })
         })
     }
+
+    pub fn parse_path_parens(reader: &mut TokenStreamReader) -> Option<Vec<AstPathTree>> {
+        if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
+            // TODO: We should probably add a generic list parser.
+            // ^ This idiom shows up everywhere but I don't yet know how to make a proper abstraction
+            // for it.
+
+            let mut paths = Vec::new();
+            let mut reader = paren.reader();
+
+            // Match interior list
+            let mut delimited = DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
+
+            while let Some(_) = delimited.next(&mut reader) {
+                // The node is optional (e.g. for trailing commas)
+                if let Some(tree) = AstPathTree::parse(&mut reader) {
+                    paths.push(tree);
+                }
+            }
+
+            // Match inner group EOF
+            if reader.consume().is_some() {
+                return None;
+            }
+
+            Some(paths)
+        } else {
+            Some(Vec::new())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -271,5 +301,30 @@ impl AstPathTerminator {
                 None
             }
         )
+    }
+}
+
+// === Qualifiers === //
+
+#[derive(Debug, Clone)]
+pub struct AstVisQualifier {
+    pub visible_to: Vec<AstPathTree>,
+}
+
+impl AstVisQualifier {
+    //noinspection DuplicatedCode
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| {
+            // Match "pub"
+            if !util_match_specific_kw(reader, AstKeyword::Pub) {
+                return None;
+            }
+
+            // Match optional path list
+            let visible_to = AstPathTree::parse_path_parens(reader)?;
+
+            // Construct
+            Some(Self { visible_to })
+        })
     }
 }

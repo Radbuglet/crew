@@ -1,4 +1,4 @@
-// TODO: Function types with full generic support and infix "type operators" (e.g. "?", "[]", "*" if we do move semantics)
+// TODO: Function types with full generic support and infix "type operators" (e.g. "?", "[]", "+", "-", "*" if we do move semantics)
 
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{

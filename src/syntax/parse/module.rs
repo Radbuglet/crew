@@ -1,12 +1,13 @@
-use crate::syntax::parse::macros::AstAnyAttrMacro;
-use crate::syntax::parse::path::AstPathTree;
+use crate::syntax::parse::class::AstClassItem;
+use crate::syntax::parse::macros::{AstAnyAttrMacro, AstAttrQualifier};
+use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::util::{
     util_match_group_delimited, util_match_ident, util_match_punct, util_match_specific_kw,
-    util_punct_matcher, AstKeyword,
+    AstKeyword,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
 use crate::util::enum_utils::{enum_categories, VariantOf};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, StreamReader};
+use crate::util::reader::{match_choice, LookaheadReader, StreamReader};
 
 #[derive(Debug, Clone)]
 pub struct AstModule {
@@ -179,7 +180,7 @@ impl AstModUse {
 pub struct AstModObject {
     kind: AstModObjectKind,
     name: String,
-    items: (),
+    items: Vec<AstClassItem>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -193,8 +194,8 @@ pub enum AstModObjectKind {
 enum_categories! {
     #[derive(Debug, Clone)]
     pub enum AstModQualifier {
-        Vis(AstModVisQualifier),
-        Attr(AstModAttrQualifier),
+        Vis(AstVisQualifier),
+        Attr(AstAttrQualifier),
     }
 }
 
@@ -202,67 +203,8 @@ impl AstModQualifier {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         match_choice!(
             reader,
-            |reader| Some(AstModVisQualifier::parse(reader)?.wrap()),
-            |reader| Some(AstModAttrQualifier::parse(reader)?.wrap())
+            |reader| Some(AstVisQualifier::parse(reader)?.wrap()),
+            |reader| Some(AstAttrQualifier::parse(reader)?.wrap())
         )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AstModVisQualifier {
-    pub visible_to: Vec<AstPathTree>,
-}
-
-impl AstModVisQualifier {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| {
-            // Match "pub"
-            if !util_match_specific_kw(reader, AstKeyword::Pub) {
-                return None;
-            }
-
-            // Match optional path list
-            let mut visible_to = Vec::new();
-            if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
-                // TODO: We should probably add a generic list parser.
-                // ^ This idiom shows up everywhere but I don't yet know how to make a proper abstraction
-                // for it.
-
-                let mut reader = paren.reader();
-
-                // Match interior list
-                let mut delimited =
-                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-
-                while let Some(_) = delimited.next(&mut reader) {
-                    // The node is optional (e.g. for trailing commas)
-                    if let Some(tree) = AstPathTree::parse(&mut reader) {
-                        visible_to.push(tree);
-                    }
-                }
-
-                // Match inner group EOF
-                if reader.consume().is_some() {
-                    return None;
-                }
-            }
-
-            // Construct
-            Some(Self { visible_to })
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AstModAttrQualifier {
-    pub attr: AstAnyAttrMacro,
-}
-
-impl AstModAttrQualifier {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| match AstAnyAttrMacro::parse(reader) {
-            Some((false, attr)) => Some(Self { attr }),
-            _ => None,
-        })
     }
 }

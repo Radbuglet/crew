@@ -27,7 +27,7 @@
 - [ ] `Folders` should support the closure-return system
 - [ ] The `Folder` API can be improved significantly.
 - [ ] We should move to a component-based allocation scheme to reduce the number of times we recreate objects.
-- [ ] Parsing loads the entire file into memory.
+- [ ] Parsing loads the entire file into memory
 - [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples.
 - [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
 - [ ] `TokenStreams` should also have a slice type.

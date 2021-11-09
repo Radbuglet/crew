@@ -35,6 +35,8 @@ enum_meta! {
         Readonly = "readonly",
         Val = "val",
         Var = "var",
+        Hole = "_",
+        Dynamic = "dynamic",
 
         // === Reserved === //
         Abstract = "abstract",

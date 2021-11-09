@@ -100,10 +100,6 @@ use std::marker::PhantomData;
 /// error so it may be useful to think of the root-level return value of a match function as
 /// indicating syntactic *intent* instead of syntactic *validity*.
 ///
-/// ## Optimization
-///
-/// TODO: Minimizing backtracking
-///
 /// [LookaheadReaders]: LookaheadReader
 /// [production rules]: https://en.wikipedia.org/wiki/Production_(computer_science)
 /// [lookahead]: LookaheadReader::lookahead

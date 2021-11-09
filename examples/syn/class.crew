@@ -13,7 +13,7 @@ pub class MyClass {
     @AndAttributes
     pub(path::here)
     in(other::{path::here, and::here})
-    out(CustomType<MoreGenerics>, Ahh<Why>, dynamic)
+    out(CustomType<MoreGenerics>, Ahh<Why>, dynamic, _)
     static
     where Generics: Here
     impl(path.to.thing._, and.other.thing)
