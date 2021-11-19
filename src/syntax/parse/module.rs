@@ -112,9 +112,7 @@ impl AstModModule {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match mod keyword
-            if !util_match_specific_kw(reader, AstKeyword::Mod) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::Mod)?;
 
             // Match module name
             let name = util_match_ident(reader)?;
@@ -163,9 +161,7 @@ impl AstModUse {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "use"
-            if !util_match_specific_kw(reader, AstKeyword::Use) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::Use)?;
 
             // Match tree
             let path = AstPathTree::parse(reader)?;
@@ -187,10 +183,7 @@ pub struct AstModClass {
 impl AstModClass {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            if !util_match_specific_kw(reader, AstKeyword::Class) {
-                return None;
-            }
-
+            let _ = util_match_specific_kw(reader, AstKeyword::Class)?;
             let name = util_match_ident(reader)?;
             let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
             let items = AstClassItem::parse_group_inner(&mut group.reader())?;

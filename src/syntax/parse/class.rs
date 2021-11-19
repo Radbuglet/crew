@@ -127,18 +127,14 @@ impl AstClassItemRemote {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match prefix
-            if !util_match_specific_kw(reader, AstKeyword::On) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::On)?;
 
             // Match field name
             let name = util_match_ident(reader)?;
 
             // Match optional rename (significant in impl-hole blocks)
             let rename_as = reader.lookahead(|reader| {
-                if !util_match_specific_kw(reader, AstKeyword::As) {
-                    return None;
-                }
+                let _ = util_match_specific_kw(reader, AstKeyword::As)?;
 
                 util_match_ident(reader)
             });
@@ -191,10 +187,7 @@ impl AstClassQualifierIn {
     //noinspection DuplicatedCode
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            if !util_match_specific_kw(reader, AstKeyword::In) {
-                return None;
-            }
-
+            let _ = util_match_specific_kw(reader, AstKeyword::In)?;
             let visible_to = AstPathTree::parse_path_parens(reader)?;
 
             Some(Self { visible_to })
@@ -211,9 +204,7 @@ impl AstClassQualifierOut {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match start keyword
-            if !util_match_specific_kw(reader, AstKeyword::Out) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::Out)?;
 
             // Match optional type list
             // Empty lists and the lack thereof are treated identically by the compiler (i.e. it will
@@ -265,9 +256,9 @@ impl AstOutTarget {
             // Match types
             |reader| Some(Self::Type(AstType::parse(reader)?)),
             // Match inference holes
-            |reader| util_match_specific_kw(reader, AstKeyword::Hole).then_some(Self::Infer),
+            |reader| util_match_specific_kw(reader, AstKeyword::Hole).and(Some(Self::Infer)),
             // Match dynamic
-            |reader| util_match_specific_kw(reader, AstKeyword::Dynamic).then_some(Self::Dynamic)
+            |reader| util_match_specific_kw(reader, AstKeyword::Dynamic).and(Some(Self::Dynamic))
         )
     }
 }
@@ -280,9 +271,7 @@ pub struct AstClassQualifierImpl {
 impl AstClassQualifierImpl {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            if !util_match_specific_kw(reader, AstKeyword::Impl) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::Impl)?;
 
             let group = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
 
@@ -321,10 +310,7 @@ impl AstImplPath {
         let hole_suffix = reader
             .lookahead(|reader| {
                 let _ = delimited.next(reader)?;
-
-                if !util_match_specific_kw(reader, AstKeyword::Hole) {
-                    return None;
-                }
+                let _ = util_match_specific_kw(reader, AstKeyword::Hole)?;
 
                 Some(())
             })
@@ -339,6 +325,6 @@ pub struct AstClassQualifierStatic;
 
 impl AstClassQualifierStatic {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        util_match_specific_kw(reader, AstKeyword::Static).then_some(Self)
+        util_match_specific_kw(reader, AstKeyword::Static).and(Some(Self))
     }
 }

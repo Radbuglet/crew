@@ -38,6 +38,7 @@ enum_meta! {
         Var = "var",
         Hole = "_",
         Dynamic = "dynamic",
+        Super = "super",
 
         // === Reserved === //
         Abstract = "abstract",
@@ -52,7 +53,6 @@ enum_meta! {
         Async = "async",
         Yield = "yield",
         Override = "override",
-        Super = "super",
     }
 }
 
@@ -81,8 +81,18 @@ pub fn util_match_kw(reader: &mut TokenStreamReader) -> Option<AstKeyword> {
     reader.lookahead(|reader| Some(util_match_ident_or_kw(reader)?.kw?))
 }
 
-pub fn util_match_specific_kw(reader: &mut TokenStreamReader, kw: AstKeyword) -> bool {
-    reader.lookahead(|reader| util_match_kw(reader) == Some(kw))
+pub fn util_match_specific_kw<'a>(
+    reader: &mut TokenStreamReader<'a>,
+    kw: AstKeyword,
+) -> Option<&'a Span> {
+    reader.lookahead(|reader| {
+        let ident = reader.consume()?.try_cast_ref::<TokenIdent>()?;
+        if ident.text == *kw.meta() {
+            Some(&ident.span)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn util_match_group<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenGroup> {

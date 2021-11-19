@@ -20,23 +20,11 @@ impl AstPathRoot {
         match_choice!(
             reader,
             // Absolute
-            |reader| if util_match_turbo(reader).is_some() {
-                Some(Self::Absolute)
-            } else {
-                None
-            },
+            |reader| util_match_turbo(reader).and(Some(Self::Absolute)),
             // Self
-            |reader| if util_match_specific_kw(reader, AstKeyword::Self_) {
-                Some(Self::Self_)
-            } else {
-                None
-            },
+            |reader| util_match_specific_kw(reader, AstKeyword::Self_).and(Some(Self::Self_)),
             // Crate
-            |reader| if util_match_specific_kw(reader, AstKeyword::Crate) {
-                Some(Self::Crate)
-            } else {
-                None
-            },
+            |reader| util_match_specific_kw(reader, AstKeyword::Crate).and(Some(Self::Crate)),
         )
         .unwrap_or(Self::Unspecified)
     }
@@ -62,11 +50,7 @@ impl AstPathPart {
         match_choice!(
             reader,
             // Match super literal
-            |reader| if util_match_specific_kw(reader, AstKeyword::Super) {
-                Some(Self::Super(1))
-            } else {
-                None
-            },
+            |reader| util_match_specific_kw(reader, AstKeyword::Super).and(Some(Self::Super(1))),
             // Match super carets
             |reader| {
                 let caret_count = reader
@@ -258,11 +242,7 @@ impl AstPathTerminator {
             // Rename
             |reader| {
                 let real_id = util_match_ident(reader)?;
-
-                if !util_match_specific_kw(reader, AstKeyword::As) {
-                    return None;
-                }
-
+                let _ = util_match_specific_kw(reader, AstKeyword::As)?;
                 let target_id = util_match_ident(reader)?;
 
                 Some(Self::Rename {
@@ -318,9 +298,7 @@ impl AstVisQualifier {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "pub"
-            if !util_match_specific_kw(reader, AstKeyword::Pub) {
-                return None;
-            }
+            let _ = util_match_specific_kw(reader, AstKeyword::Pub)?;
 
             // Match optional path list
             let visible_to = AstPathTree::parse_path_parens(reader)?;
