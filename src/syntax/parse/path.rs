@@ -69,9 +69,11 @@ impl AstPathPart {
             },
             // Match super carets
             |reader| {
-                let caret_count = reader.consume_while(|reader| {
-                    util_match_punct(reader, PunctChar::Caret, None).is_some()
-                });
+                let caret_count = reader
+                    .consume_while(|reader| {
+                        util_match_punct(reader, PunctChar::Caret, None).is_some()
+                    })
+                    .count();
 
                 if caret_count > 0 {
                     Some(Self::Super(caret_count))
@@ -81,7 +83,7 @@ impl AstPathPart {
             },
             // Match literal
             |reader| match util_match_ident_or_kw(reader) {
-                Some(IdentOrKw { raw, kw: None }) => Some(Self::Lit(raw.text.clone())),
+                Some(IdentOrKw { raw, kw: None }) => Some(Self::Lit(raw.take_text())),
                 _ => None,
             }
         )
@@ -227,11 +229,11 @@ impl AstPathNode {
             ) {
                 Some(Matched::Terminator(matched)) => {
                     terminator = matched;
-                    RepFlow::Finish
+                    RepFlow::Finish(())
                 }
                 Some(Matched::Part(part)) => {
                     parts.push(part);
-                    RepFlow::Continue
+                    RepFlow::Continue(())
                 }
                 None => RepFlow::Reject,
             }
@@ -264,8 +266,8 @@ impl AstPathTerminator {
                 let target_id = util_match_ident(reader)?;
 
                 Some(Self::Rename {
-                    target: real_id.text.clone(),
-                    rename: target_id.text.clone(),
+                    target: real_id.take_text(),
+                    rename: target_id.take_text(),
                 })
             },
             // Tree

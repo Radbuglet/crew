@@ -200,6 +200,10 @@ impl FileLoc {
         self.raw.pos
     }
 
+    pub fn char_index(&self) -> usize {
+        self.raw.index
+    }
+
     pub fn line(&self) -> usize {
         self.raw.line()
     }
@@ -240,7 +244,7 @@ impl Display for FileLoc {
     }
 }
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash)]
 struct FileLocRaw {
     pub index: usize,
     pub pos: FilePos,
@@ -258,6 +262,14 @@ impl FileLocRaw {
 
     pub fn col(&self) -> usize {
         self.pos.col
+    }
+}
+
+impl Eq for FileLocRaw {}
+
+impl PartialEq for FileLocRaw {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
     }
 }
 

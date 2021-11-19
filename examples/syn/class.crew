@@ -1,42 +1,42 @@
 pub class MyClass {
-    @SomeAttribute
-    pub val foo: u32;
+    var field_1: Type;
 
-    @SomeOtherAttribute
-    pub val bar: SomeType<WithGenerics, That=Are::Associated, Whee=Woo>;
+    @WithAttribute
+    @WithAttribute(and arguments)
+    val field_2: Type;
 
-    pub val bar_with_impl: SomeType impl {
-        val this_is_the_same_thing_again: u32;
-    };
+    val type_with_generics: (Type<B, C, D = E<F, G>, A = B<C = D, E = (F, G)>>, OtherType<()>);
 
-    /// Some qualifiers
-    @AndAttributes
-    pub(path::here)
-    in(other::{path::here, and::here})
-    out(CustomType<MoreGenerics>, Ahh<Why>, dynamic, _)
-    static
-    where Generics: Here
-    impl(path.to.thing._, and.other.thing)
-    {
-        val baz: i32;
-        var maz: u32;
+    pub
+    pub(some::path::here)
+    pub(yes::we::support::{trees, *})
+    val field_3: Whee;
+
+    static val field_4: Whee;
+
+    pub static @Foo pub(foo::bar) @Bar val baz: Maz;
+
+    static in static pub pub static in(foo::bar::{path, here}) @Test out(dynamic, _, My<Type = Here>) val foo: Foo;
+
+    pub {
+        val this: Is<A = (Block)>;
     }
 
-    //> Regions!
-
-    val prop: fn(OhGod<These=Exist<fn(foo: u32) -> (u8, fn(no: Foo<(Foo,), (Bar)>))>>) -> u8 => ...;
-    pub var prop_2: Type {
-        pub get => ...;
-        set {
-            ...
+    {
+        {
+            val this_is_nested: and::unqualified<()>;
         }
+
+        pub(path::here) val huzzah: other::path::here;
+    }
+}
+
+pub class MyOtherClass {
+    pub static {
+        val all_my_statics: ::Here<self::paths::work::here::too>;
     }
 
-    fn just_an_fn<Param1: OtherThing<fn(not_these: Again), Assoc = Thing> + fn() -> (), Param2>() -> fn(a: u8) -> fn(b: u8) -> (u8, fn(),)
-    where
-        Param1 = ExactThing,
-        Param2: BaseThing,
-    {
-        ...
+    impl(path.to.input._) {
+        on foo as bar;
     }
 }

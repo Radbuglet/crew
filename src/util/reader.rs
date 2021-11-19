@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-// === Interface === //
+// === Lookahead machinery === //
 
 /// Readers are cursors which allow users to procedurally match a grammar. [LookaheadReaders] are
 /// special because they allow users to fork the cursor and "look-ahead" an arbitrary number of
@@ -31,7 +31,7 @@ use std::marker::PhantomData;
 /// There are two contexts in which a path can be used: a `use` item where each path can be ended
 /// with a `"::" + <terminator>` and in expressions where this is not possible. It's tempting to
 /// construct a match function that just matches this first "simple path" part and then compose that
-/// with another function to match the optional terminator. However, this complicates diagnostic
+/// with another function to match the optional terminator. However, doing so complicates diagnostic
 /// handling.
 ///
 /// In a non-composed context, we could say that turbo (`::`) delimiters must be followed by either
@@ -58,7 +58,7 @@ use std::marker::PhantomData;
 /// the `match_simple_path` can accept a closure taking a mutable [LookaheadReader] reference which
 /// will provide an additional way to match an unclosed terminator. This both enables the primary
 /// function to detect illegal terminators (instead of ignoring them) and allows the grammar
-/// extensions to work off context from the parent function which would otherwise be discarded.
+/// extensions to work off context from the parent function which would have otherwise been discarded.
 ///
 /// ## Cursor Recovery
 ///
@@ -136,47 +136,29 @@ pub trait LookaheadReader: Clone {
         handler(&mut self.clone()).into_result()
     }
 
-    fn consume_while<F, R>(&mut self, mut handler: F) -> usize
+    fn consume_while<F, R>(&mut self, handler: F) -> ConsumeWhileIter<Self, F, R>
     where
         F: FnMut(&mut Self) -> R,
-        R: LookaheadResult,
-        R::Ret: RepFlowIndicator,
+        R: LookaheadResult + RepeatResult,
     {
-        let mut found = 0;
-        loop {
-            let res = self.lookahead_raw(&mut handler);
-
-            // Only count successful matches
-            if res.is_truthy() {
-                found += 1;
-            }
-
-            // Only continue if asked
-            if !res.into_result().should_continue() {
-                break;
-            }
-        }
-        found
+        ConsumeWhileIter::new(self, handler)
     }
 }
-
-pub macro match_choice($reader:expr, $(|$binding:ident| $expr:expr),*$(,)?) {{
-    let reader = $reader;
-    let mut result = None;
-    $(
-        if let Some(res) = reader.lookahead(|$binding| $expr) {
-            assert!(result.is_none(), "Ambiguous pattern!");
-            result = Some(res);
-        }
-    )*
-    result
-}}
 
 pub trait LookaheadResult {
     type Ret;
 
     fn is_truthy(&self) -> bool;
     fn into_result(self) -> Self::Ret;
+}
+
+pub trait RepeatResult: Sized {
+    type Ret;
+
+    /// Attempts to unwrap the result into the value returned by the iterator. The first element
+    /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
+    /// regardless if the result is `None`.
+    fn into_stream_result(self) -> Option<(bool, Self::Ret)>;
 }
 
 impl LookaheadResult for bool {
@@ -188,6 +170,17 @@ impl LookaheadResult for bool {
 
     fn into_result(self) -> Self::Ret {
         self
+    }
+}
+
+impl RepeatResult for bool {
+    type Ret = ();
+
+    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+        match self {
+            true => Some((true, ())),
+            false => None,
+        }
     }
 }
 
@@ -203,6 +196,14 @@ impl<T> LookaheadResult for Option<T> {
     }
 }
 
+impl<T> RepeatResult for Option<T> {
+    type Ret = T;
+
+    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+        self.map(|value| (true, value))
+    }
+}
+
 impl<T, E> LookaheadResult for Result<T, E> {
     type Ret = Self;
 
@@ -215,52 +216,228 @@ impl<T, E> LookaheadResult for Result<T, E> {
     }
 }
 
-impl<T> LookaheadResult for (bool, T) {
-    type Ret = T;
+impl<T, E> RepeatResult for Result<T, E> {
+    type Ret = Result<T, E>;
 
-    fn is_truthy(&self) -> bool {
-        self.0
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self.1
+    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+        match self {
+            res @ Ok(_) => Some((true, res)),
+            res @ Err(_) => Some((false, res)),
+        }
     }
 }
 
-pub trait RepFlowIndicator: Sized {
-    fn should_continue(self) -> bool;
+// === Repetition matching === //
+
+pub struct ConsumeWhileIter<'a, R, F, O>
+where
+    R: LookaheadReader,
+    F: FnMut(&mut R) -> O,
+    O: LookaheadResult + RepeatResult,
+{
+    _ty: PhantomData<fn() -> O>,
+    handler: F,
+    reader: &'a mut R,
+    finished: bool,
 }
 
-impl RepFlowIndicator for bool {
-    fn should_continue(self) -> bool {
-        self
+impl<'a, R, F, O> ConsumeWhileIter<'a, R, F, O>
+where
+    R: LookaheadReader,
+    F: FnMut(&mut R) -> O,
+    O: LookaheadResult + RepeatResult,
+{
+    pub fn new(reader: &'a mut R, handler: F) -> Self {
+        Self {
+            _ty: PhantomData,
+            handler,
+            reader,
+            finished: false,
+        }
+    }
+}
+
+impl<'a, R, F, O> Iterator for ConsumeWhileIter<'a, R, F, O>
+where
+    R: LookaheadReader,
+    F: FnMut(&mut R) -> O,
+    O: LookaheadResult + RepeatResult,
+{
+    type Item = <O as RepeatResult>::Ret;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        let res = self.reader.lookahead_raw(&mut self.handler);
+
+        match res.into_stream_result() {
+            Some((true, res)) => Some(res),
+            Some((false, res)) => {
+                self.finished = true;
+                Some(res)
+            }
+            None => None,
+        }
+    }
+}
+
+impl<'a, R, F, O> Drop for ConsumeWhileIter<'a, R, F, O>
+where
+    R: LookaheadReader,
+    F: FnMut(&mut R) -> O,
+    O: LookaheadResult + RepeatResult,
+{
+    fn drop(&mut self) {
+        for _ in self {}
     }
 }
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum RepFlow {
-    Continue,
-    Finish,
+pub enum RepFlow<T> {
+    Continue(T),
+    Finish(T),
     Reject,
 }
 
-impl RepFlowIndicator for RepFlow {
-    fn should_continue(self) -> bool {
-        self == Self::Continue
-    }
-}
-
-impl LookaheadResult for RepFlow {
+impl<T> LookaheadResult for RepFlow<T> {
     type Ret = Self;
 
     fn is_truthy(&self) -> bool {
-        *self != Self::Reject
+        match self {
+            Self::Reject => false,
+            _ => true,
+        }
     }
 
     fn into_result(self) -> Self::Ret {
         self
     }
 }
+
+impl<T> RepeatResult for RepFlow<T> {
+    type Ret = T;
+
+    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+        match self {
+            Self::Continue(value) => Some((true, value)),
+            Self::Finish(value) => Some((false, value)),
+            Self::Reject => None,
+        }
+    }
+}
+
+// === Delimited list matching === //
+
+pub struct DelimiterMatcher<Reader, FDel, Res> {
+    _sig: PhantomData<fn(&mut Reader) -> Res>,
+    match_del: FDel,
+    first: bool,
+}
+
+impl<Reader, FDel, Res> Clone for DelimiterMatcher<Reader, FDel, Res>
+where
+    FDel: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            _sig: PhantomData,
+            match_del: self.match_del.clone(),
+            first: self.first,
+        }
+    }
+}
+
+impl<Reader, FDel, Res> LookaheadReader for DelimiterMatcher<Reader, FDel, Res> where FDel: Clone {}
+
+impl<Reader, FDel, Res> DelimiterMatcher<Reader, FDel, Res>
+where
+    Reader: LookaheadReader,
+    FDel: FnMut(&mut Reader) -> Res,
+    Res: LookaheadResult,
+    Res::Ret: Default,
+{
+    pub fn new(match_del: FDel, require_leading: bool) -> Self {
+        Self {
+            _sig: PhantomData,
+            match_del,
+            first: !require_leading,
+        }
+    }
+
+    pub fn new_start(match_del: FDel) -> Self {
+        Self::new(match_del, false)
+    }
+
+    pub fn is_first(&self) -> bool {
+        self.first
+    }
+
+    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::Ret> {
+        if self.first {
+            self.first = false;
+            Some(Default::default())
+        } else {
+            let res = reader.lookahead_raw(&mut self.match_del);
+            if res.is_truthy() {
+                Some(res.into_result())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+// === Branch matching === //
+
+// ... not sure why this is needed but type inference prefers it so ¯\_(ツ)_/¯
+pub fn helper_call_closure<F, A, R>(fn_: F, arg: A) -> R
+where
+    F: FnOnce(A) -> R,
+{
+    fn_(arg)
+}
+
+pub macro match_choice {
+    (
+        $reader:expr,
+        $(|$binding:ident| $expr:expr),*$(,)?
+    ) => {
+        match_choice!($reader, [$(|$binding| $expr),*])
+    },
+    (
+        $reader:expr,
+        $([
+            $(|$binding:ident| $expr:expr),*$(,)?
+        ]),*$(,)?
+    ) => {
+        loop {
+            let reader = $reader;
+
+            $({
+                let mut result = None;
+
+                $({
+                    let mut fork = Clone::clone(reader);
+                    if let Some(res) = helper_call_closure(|$binding| $expr, &mut fork) {
+                        debug_assert!(result.is_none(), "Ambiguous pattern!");
+                        result = Some((fork, res));
+                    }
+                })*
+
+                if let Some((fork, result)) = result {
+                    *reader = fork;
+                    break Some(result);
+                }
+            })*
+
+            break None;
+        }
+    }
+}
+
+// === Generic stream machinery === //
 
 pub trait StreamReader: Sized {
     type Res: StreamResult;
@@ -329,46 +506,6 @@ impl<T, E> StreamResult for Result<Option<T>, E> {
             Ok(Some(success)) => Some(Ok(success)),
             Ok(None) => None,
             Err(err) => Some(Err(err)),
-        }
-    }
-}
-
-pub struct DelimiterMatcher<Reader, FDel, Res> {
-    _sig: PhantomData<fn(&mut Reader) -> Res>,
-    match_del: FDel,
-    first: bool,
-}
-
-impl<Reader, FDel, Res> DelimiterMatcher<Reader, FDel, Res>
-where
-    Reader: LookaheadReader,
-    FDel: FnMut(&mut Reader) -> Res,
-    Res: LookaheadResult,
-    Res::Ret: Default,
-{
-    pub fn new(match_del: FDel, require_leading: bool) -> Self {
-        Self {
-            _sig: PhantomData,
-            match_del,
-            first: !require_leading,
-        }
-    }
-
-    pub fn new_start(match_del: FDel) -> Self {
-        Self::new(match_del, false)
-    }
-
-    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::Ret> {
-        if self.first {
-            self.first = false;
-            Some(Default::default())
-        } else {
-            let res = reader.lookahead_raw(&mut self.match_del);
-            if res.is_truthy() {
-                Some(res.into_result())
-            } else {
-                None
-            }
         }
     }
 }

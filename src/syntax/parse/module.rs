@@ -86,6 +86,7 @@ enum_categories! {
         Mod(AstModModule),
         Block(AstModBlock),
         Use(AstModUse),
+        Class(AstModClass),
     }
 }
 
@@ -96,6 +97,7 @@ impl AstModItemKind {
             |reader| Some(AstModModule::parse(reader)?.wrap()),
             |reader| Some(AstModBlock::parse(reader)?.wrap()),
             |reader| Some(AstModUse::parse(reader)?.wrap()),
+            |reader| Some(AstModClass::parse(reader)?.wrap()),
         )
     }
 }
@@ -129,7 +131,7 @@ impl AstModModule {
             }
 
             Some(Self {
-                name: name.text.clone(),
+                name: name.take_text(),
                 inline,
             })
         })
@@ -177,16 +179,28 @@ impl AstModUse {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstModObject {
-    kind: AstModObjectKind,
+pub struct AstModClass {
     name: String,
     items: Vec<AstClassItem>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum AstModObjectKind {
-    Class,
-    Struct,
+impl AstModClass {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| {
+            if !util_match_specific_kw(reader, AstKeyword::Class) {
+                return None;
+            }
+
+            let name = util_match_ident(reader)?;
+            let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
+            let items = AstClassItem::parse_group_inner(&mut group.reader())?;
+
+            Some(Self {
+                name: name.take_text(),
+                items,
+            })
+        })
+    }
 }
 
 // === Qualifiers === //

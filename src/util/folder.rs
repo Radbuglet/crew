@@ -1,7 +1,7 @@
 // TODO: Code review
 
+use crate::util::iter_ext::{ArrayCollectExt, TakeAtExt};
 use crate::util::reader::{LookaheadReader, StreamReader};
-use crate::util::slice_ext::{ArrayCollectExt, TakeAtExt};
 use std::mem::{transmute, MaybeUninit};
 
 // === Generic mechanisms === //

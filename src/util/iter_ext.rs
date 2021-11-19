@@ -68,6 +68,64 @@ impl<I: Iterator> ArrayCollectExt for I {
     }
 }
 
+pub trait ResultLike {
+    type Value;
+    type Error;
+
+    fn to_result(self) -> Result<Self::Value, Self::Error>;
+}
+
+impl<T> ResultLike for Option<T> {
+    type Value = T;
+    type Error = ();
+
+    fn to_result(self) -> Result<Self::Value, Self::Error> {
+        match self {
+            Some(ok) => Ok(ok),
+            None => Err(()),
+        }
+    }
+}
+
+impl<T, E> ResultLike for Result<T, E> {
+    type Value = T;
+    type Error = E;
+
+    fn to_result(self) -> Result<Self::Value, Self::Error> {
+        self
+    }
+}
+
+pub trait TryCollectExt: Sized + Iterator {
+    type Value;
+    type Error;
+
+    fn try_collect<C: FromIterator<Self::Value>>(self) -> Result<C, Self::Error>;
+}
+
+impl<E: ResultLike, I: Iterator<Item = E>> TryCollectExt for I {
+    type Value = E::Value;
+    type Error = E::Error;
+
+    fn try_collect<C: FromIterator<Self::Value>>(self) -> Result<C, Self::Error> {
+        let mut mapped = self.map(ResultLike::to_result);
+        let iter = (&mut mapped)
+            .take_while(Result::is_ok)
+            // Default unwrap methods format the error on panic.
+            .map(|res| match res {
+                Ok(res) => res,
+                Err(_) => unreachable!(),
+            });
+
+        let collection = iter.collect::<C>();
+        match mapped.next() {
+            Some(Ok(_)) => unreachable!(),
+            Some(Err(err)) => Err(err),
+            None => Ok(collection),
+        }
+    }
+}
+
 #[test]
 fn swap_example() {
     let mut elems = vec![1, 2, 3, 4];

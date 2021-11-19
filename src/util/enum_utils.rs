@@ -219,6 +219,7 @@ pub macro enum_categories($(
         fn match_owned(e: $item_name) -> Result<Self, $item_name> {
             match e {
                 $item_name::$var_name(val) => Ok(val),
+                #[allow(unreachable_patterns)]
                 e @ _ => Err(e),
             }
         }
@@ -226,6 +227,7 @@ pub macro enum_categories($(
         fn match_ref(e: &$item_name) -> Option<&Self> {
             match e {
                 $item_name::$var_name(val) => Some(val),
+                #[allow(unreachable_patterns)]
                 _ => None,
             }
         }
@@ -233,6 +235,7 @@ pub macro enum_categories($(
         fn match_mut(e: &mut $item_name) -> Option<&mut Self> {
             match e {
                 $item_name::$var_name(val) => Some(val),
+                #[allow(unreachable_patterns)]
                 _ => None,
             }
         }

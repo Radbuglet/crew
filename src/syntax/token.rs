@@ -220,6 +220,12 @@ pub struct TokenIdent {
     pub text: String,
 }
 
+impl TokenIdent {
+    pub fn take_text(&self) -> String {
+        self.text.clone()
+    }
+}
+
 impl AnyToken for TokenIdent {
     fn full_span(&self) -> Span {
         self.span.clone()

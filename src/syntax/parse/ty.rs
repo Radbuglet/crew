@@ -1,5 +1,3 @@
-// TODO: Function types with full generic support and infix "type operators" (e.g. "?", "[]", "+", "-", "*" if we do move semantics)
-
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{
     util_match_group_delimited, util_match_ident, util_match_punct, util_punct_matcher,
@@ -45,13 +43,16 @@ impl AstTypeObj {
 
 #[derive(Debug, Clone)]
 pub struct AstTypeObjGenerics {
-    pub unnamed_params: Vec<AstType>,
-    pub named_params: Vec<(String, AstType)>,
+    pub params: Vec<GenericParamKind>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GenericParamKind {
+    Named(String, AstType),
+    Unnamed(AstType),
 }
 
 impl AstTypeObjGenerics {
-    // FIXME: We'll actually fix this warning once proper list matching infrastructure is in place.
-    //noinspection DuplicatedCode
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match '<'
@@ -59,66 +60,42 @@ impl AstTypeObjGenerics {
 
             // Match list
             let mut delimited = DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-            let unnamed_params = {
-                let mut collector = Vec::new();
-
-                reader.consume_while(|reader| {
-                    // Match delimiter
-                    if delimited.next(reader).is_none() {
-                        return false;
-                    }
-
-                    // Match param type
-                    if let Some(parsed) = AstType::parse(reader) {
-                        collector.push(parsed);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                collector
-            };
-
-            let named_params = {
-                let mut collector = Vec::new();
-
-                reader.consume_while(|reader| {
-                    // Match delimiter
-                    if delimited.next(reader).is_none() {
-                        return false;
-                    }
-
-                    // Match param name
-                    let name = match util_match_ident(reader) {
-                        Some(id) => &id.text,
-                        None => return false,
-                    };
-
-                    // Match equals
-                    if util_match_punct(reader, PunctChar::Equals, None).is_none() {
-                        return false;
-                    }
-
-                    // Match param type
-                    if let Some(parsed) = AstType::parse(reader) {
-                        collector.push((name.clone(), parsed));
-                        true
-                    } else {
-                        false
-                    }
-                });
-                collector
-            };
+            let params = reader
+                .consume_while(|reader| {
+                    let _ = delimited.next(reader)?;
+                    Self::parse_param(reader)
+                })
+                .collect();
 
             // Match '>'
             let _ = util_match_punct(reader, PunctChar::Greater, None)?;
 
             // Produce
-            Some(Self {
-                unnamed_params,
-                named_params,
-            })
+            Some(Self { params })
         })
+    }
+
+    pub fn parse_param(reader: &mut TokenStreamReader) -> Option<GenericParamKind> {
+        // N.B. we match named in a different priority group to unnamed because the unnamed grammar
+        // is a partial subset of named but not vice-versa.
+        match_choice!(
+            reader,
+            // Match named
+            [|reader| {
+                // Match param name
+                let name = util_match_ident(reader)?;
+
+                // Match equals
+                let _ = util_match_punct(reader, PunctChar::Equals, None)?;
+
+                // Match param type
+                let ty = AstType::parse(reader)?;
+
+                Some(GenericParamKind::Named(name.take_text(), ty))
+            }],
+            // Match unnamed
+            [|reader| { Some(GenericParamKind::Unnamed(AstType::parse(reader)?)) }],
+        )
     }
 }
 
@@ -128,8 +105,6 @@ pub struct AstTypeTuple {
 }
 
 impl AstTypeTuple {
-    // FIXME: Also fix here.
-    //noinspection DuplicatedCode
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             let paren = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
@@ -154,7 +129,7 @@ impl AstTypeTuple {
             });
 
             // Match EOF
-            if !inner_reader.consume().is_some() {
+            if !inner_reader.consume().is_none() {
                 return None;
             }
 

@@ -32,6 +32,7 @@ enum_meta! {
         In = "in",
         Out = "out",
         Impl = "impl",
+        On = "on",
         Readonly = "readonly",
         Val = "val",
         Var = "var",
