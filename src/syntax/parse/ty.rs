@@ -34,7 +34,7 @@ impl AstTypeObj {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             let path = AstPathDirect::parse(reader)?;
-            let generics = AstTypeObjGenerics::parse(reader);
+            let generics = AstTypeObjGenerics::parse(reader)?;
 
             Some(Self { path, generics })
         })
@@ -53,30 +53,34 @@ pub enum GenericParamKind {
 }
 
 impl AstTypeObjGenerics {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Option<Self>> {
         reader.lookahead(|reader| {
             // Match '<'
-            let _ = util_match_punct(reader, PunctChar::Less, None)?;
+            if util_match_punct(reader, PunctChar::Less, None).is_some() {
+                // Match list
+                let mut delimited =
+                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
 
-            // Match list
-            let mut delimited = DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-            let params = reader
-                .consume_while(|reader| {
-                    let _ = delimited.next(reader)?;
-                    Self::parse_param(reader)
-                })
-                .collect();
+                let params = reader
+                    .consume_while(|reader| {
+                        delimited.next(reader)?;
+                        Self::parse_param(reader)
+                    })
+                    .collect();
 
-            // Match '>'
-            let _ = util_match_punct(reader, PunctChar::Greater, None)?;
+                // Match '>'
+                util_match_punct(reader, PunctChar::Greater, None)?;
 
-            // Produce
-            Some(Self { params })
+                // Produce
+                Some(Some(Self { params }))
+            } else {
+                Some(None)
+            }
         })
     }
 
     pub fn parse_param(reader: &mut TokenStreamReader) -> Option<GenericParamKind> {
-        // N.B. we match named in a different priority group to unnamed because the unnamed grammar
+        // N.B. we match named in a higher priority group than unnamed because the unnamed grammar
         // is a partial subset of named but not vice-versa.
         match_choice!(
             reader,
@@ -86,7 +90,7 @@ impl AstTypeObjGenerics {
                 let name = util_match_ident(reader)?;
 
                 // Match equals
-                let _ = util_match_punct(reader, PunctChar::Equals, None)?;
+                util_match_punct(reader, PunctChar::Equals, None)?;
 
                 // Match param type
                 let ty = AstType::parse(reader)?;

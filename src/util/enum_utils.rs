@@ -6,8 +6,11 @@ use std::slice::Iter as SliceIter;
 pub trait EnumMeta: 'static + Sized + Copy + Eq + Hash {
     type Meta: 'static;
 
+    fn index(self) -> usize;
     fn values() -> &'static [(Self, Self::Meta)];
-    fn meta(self) -> &'static Self::Meta;
+    fn meta(self) -> &'static Self::Meta {
+        &Self::values()[self.index()].1
+    }
 
     fn values_iter() -> EnumMetaIter<Self> {
         EnumMetaIter::from_slice(Self::values())
@@ -94,64 +97,15 @@ pub macro enum_meta($(
     impl EnumMeta for $item_name {
         type Meta = $meta_ty;
 
+        fn index(self) -> usize {
+            self as usize
+        }
+
         fn values() -> &'static [(Self, Self::Meta)] {
             &Self::ITEMS
         }
-
-        fn meta(self) -> &'static Self::Meta {
-            for (var, meta) in Self::values() {
-                if self == *var {
-                    return meta;
-                }
-            }
-            unreachable!()
-        }
     }
 )*}
-
-pub trait EnumDiscriminant {
-    type Discriminant;
-
-    fn discriminant(&self) -> Self::Discriminant;
-}
-
-impl EnumDiscriminant for u8 {
-    type Discriminant = u8;
-
-    fn discriminant(&self) -> Self::Discriminant {
-        *self
-    }
-}
-
-pub trait EnumMetaDiscriminantExt: EnumMeta
-where
-    Self::Meta: EnumDiscriminant<Discriminant = Self::Discriminant>,
-{
-    type Discriminant: Sized + Hash + Eq;
-
-    fn to_disc(&self) -> Self::Discriminant;
-    fn try_from_disc(discriminant: Self::Discriminant) -> Option<Self>;
-    fn from_disc(discriminant: Self::Discriminant) -> Self {
-        Self::try_from_disc(discriminant).unwrap()
-    }
-}
-
-impl<D, M, T> EnumMetaDiscriminantExt for T
-where
-    D: Sized + Copy + Hash + Eq,
-    M: 'static + EnumDiscriminant<Discriminant = D>,
-    T: EnumMeta<Meta = M>,
-{
-    type Discriminant = D;
-
-    fn to_disc(&self) -> Self::Discriminant {
-        self.meta().discriminant()
-    }
-
-    fn try_from_disc(discriminant: Self::Discriminant) -> Option<Self> {
-        Self::find_where(move |_, meta| discriminant == meta.discriminant())
-    }
-}
 
 // === Object categories === //
 

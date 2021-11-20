@@ -2,8 +2,8 @@ use crate::syntax::parse::macros::AstAttrQualifier;
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::ty::AstType;
 use crate::syntax::parse::util::{
-    util_match_group_delimited, util_match_ident, util_match_kw, util_match_punct,
-    util_match_specific_kw, util_punct_matcher, AstKeyword,
+    util_match_func_arrow, util_match_group_delimited, util_match_ident, util_match_kw,
+    util_match_punct, util_match_specific_kw, util_punct_matcher, AstKeyword,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenIdent, TokenStreamReader};
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
@@ -47,6 +47,8 @@ enum_categories! {
         Field(AstClassItemField),
         Block(AstClassItemBlock),
         Remote(AstClassItemRemote),
+        Type(AstClassItemType),
+        Func(AstClassItemFunc),
     }
 }
 
@@ -57,6 +59,8 @@ impl AstClassItemKind {
             |reader| Some(AstClassItemField::parse(reader)?.wrap()),
             |reader| Some(AstClassItemBlock::parse(reader)?.wrap()),
             |reader| Some(AstClassItemRemote::parse(reader)?.wrap()),
+            |reader| Some(AstClassItemType::parse(reader)?.wrap()),
+            |reader| Some(AstClassItemFunc::parse(reader)?.wrap()),
         )
     }
 }
@@ -87,11 +91,11 @@ impl AstClassItemField {
             let name = util_match_ident(reader)?;
 
             // Match type annotation
-            let _ = util_match_punct(reader, PunctChar::Colon, None)?;
+            util_match_punct(reader, PunctChar::Colon, None)?;
             let ty = AstType::parse(reader)?;
 
             // Match semicolon
-            let _ = util_match_punct(reader, PunctChar::Semicolon, None)?;
+            util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self {
                 prefix,
@@ -127,25 +131,183 @@ impl AstClassItemRemote {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match prefix
-            let _ = util_match_specific_kw(reader, AstKeyword::On)?;
+            util_match_specific_kw(reader, AstKeyword::On)?;
 
             // Match field name
             let name = util_match_ident(reader)?;
 
             // Match optional rename (significant in impl-hole blocks)
             let rename_as = reader.lookahead(|reader| {
-                let _ = util_match_specific_kw(reader, AstKeyword::As)?;
-
+                util_match_specific_kw(reader, AstKeyword::As)?;
                 util_match_ident(reader)
             });
 
             // Match semicolon
-            let _ = util_match_punct(reader, PunctChar::Semicolon, None)?;
+            util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self {
                 name: name.take_text(),
                 rename_as: rename_as.map(TokenIdent::take_text),
             })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstClassItemType {
+    pub name: String,
+    pub annotation: Option<AstType>,
+    pub equals: Option<AstType>,
+}
+
+impl AstClassItemType {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| {
+            util_match_specific_kw(reader, AstKeyword::Type)?;
+            let name = util_match_ident(reader)?;
+
+            let annotation = reader.lookahead(|reader| {
+                util_match_punct(reader, PunctChar::Colon, None)?;
+                AstType::parse(reader)
+            });
+
+            let equals = reader.lookahead(|reader| {
+                util_match_punct(reader, PunctChar::Equals, None)?;
+                AstType::parse(reader)
+            });
+
+            util_match_punct(reader, PunctChar::Semicolon, None)?;
+
+            Some(Self {
+                name: name.take_text(),
+                annotation,
+                equals,
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstClassItemFunc {
+    pub name: String,
+    pub generics: Option<AstFuncGenerics>,
+    pub args: Vec<(String, AstType)>,
+    pub expr: Option<()>,
+    pub ret: Option<AstType>,
+}
+
+impl AstClassItemFunc {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| {
+            util_match_specific_kw(reader, AstKeyword::Fn)?;
+
+            // Match name
+            let name = util_match_ident(reader)?;
+
+            // Match optional generics
+            let generics = AstFuncGenerics::parse(reader)?;
+
+            // Match arguments
+            let args = {
+                let group = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
+                let mut reader = group.reader();
+
+                // Collect args
+                let mut delimited =
+                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
+
+                let args = reader
+                    .consume_while(|reader| {
+                        delimited.next(reader)?;
+
+                        // Match name
+                        let name = util_match_ident(reader)?;
+
+                        // Match type annotation
+                        util_match_punct(reader, PunctChar::Colon, None)?;
+                        let ty = AstType::parse(reader)?;
+
+                        Some((name.take_text(), ty))
+                    })
+                    .collect();
+
+                // Expect EOF
+                if !reader.consume().is_none() {
+                    return None;
+                }
+
+                args
+            };
+
+            // Match optional return type
+            let ret = if util_match_func_arrow(reader).is_some() {
+                Some(AstType::parse(reader)?)
+            } else {
+                None
+            };
+
+            // Match input expression
+            let expr = match_choice!(
+                reader,
+                // Match concrete
+                |reader| {
+                    let _group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
+                    Some(Some(()))
+                },
+                // Match prototype
+                |reader| {
+                    util_match_punct(reader, PunctChar::Semicolon, None)?;
+                    Some(None)
+                }
+            )?;
+
+            Some(Self {
+                name: name.take_text(),
+                generics,
+                args,
+                ret,
+                expr,
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstFuncGenerics {
+    pub params: Vec<(String, Option<AstType>)>,
+}
+
+impl AstFuncGenerics {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Option<Self>> {
+        reader.lookahead(|reader| {
+            // Match '<'
+            if util_match_punct(reader, PunctChar::Less, None).is_some() {
+                let mut delimited =
+                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
+
+                // Match parameters
+                let params = reader
+                    .consume_while(|reader| {
+                        delimited.next(reader)?;
+
+                        let name = util_match_ident(reader)?;
+                        let ty = if util_match_punct(reader, PunctChar::Colon, None).is_some() {
+                            Some(AstType::parse(reader)?)
+                        } else {
+                            None
+                        };
+
+                        Some((name.take_text(), ty))
+                    })
+                    .collect();
+
+                // Match '>'
+                util_match_punct(reader, PunctChar::Greater, None)?;
+
+                Some(Some(Self { params }))
+            } else {
+                Some(None)
+            }
         })
     }
 }
@@ -187,7 +349,7 @@ impl AstClassQualifierIn {
     //noinspection DuplicatedCode
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            let _ = util_match_specific_kw(reader, AstKeyword::In)?;
+            util_match_specific_kw(reader, AstKeyword::In)?;
             let visible_to = AstPathTree::parse_path_parens(reader)?;
 
             Some(Self { visible_to })
@@ -204,7 +366,7 @@ impl AstClassQualifierOut {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match start keyword
-            let _ = util_match_specific_kw(reader, AstKeyword::Out)?;
+            util_match_specific_kw(reader, AstKeyword::Out)?;
 
             // Match optional type list
             // Empty lists and the lack thereof are treated identically by the compiler (i.e. it will
@@ -271,7 +433,7 @@ pub struct AstClassQualifierImpl {
 impl AstClassQualifierImpl {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            let _ = util_match_specific_kw(reader, AstKeyword::Impl)?;
+            util_match_specific_kw(reader, AstKeyword::Impl)?;
 
             let group = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
 
@@ -289,7 +451,7 @@ impl AstClassQualifierImpl {
 #[derive(Debug, Clone)]
 pub struct AstImplPath {
     pub parts: Vec<String>,
-    pub hole_suffix: bool,
+    pub has_hole: bool,
 }
 
 impl AstImplPath {
@@ -301,22 +463,22 @@ impl AstImplPath {
             .consume_while(|reader| {
                 // TODO: Make multiple lookahead more ergonomic.
                 delimited.lookahead(|delimited| {
-                    let _ = delimited.next(reader)?;
+                    delimited.next(reader)?;
                     Some(util_match_ident(reader)?.take_text())
                 })
             })
             .collect();
 
-        let hole_suffix = reader
+        let has_hole = reader
             .lookahead(|reader| {
-                let _ = delimited.next(reader)?;
-                let _ = util_match_specific_kw(reader, AstKeyword::Hole)?;
+                delimited.next(reader)?;
+                util_match_specific_kw(reader, AstKeyword::Hole)?;
 
                 Some(())
             })
             .is_some();
 
-        Self { parts, hole_suffix }
+        Self { parts, has_hole }
     }
 }
 

@@ -480,7 +480,7 @@ enum_categories! {
 
 pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
     // Consume any shebang at the beginning of the file.
-    let _ = match_shebang(reader);
+    match_shebang(reader);
 
     // Start tokenizing
     let mut stack = vec![StackFrame::Group(TokenGroup::new(

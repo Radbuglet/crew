@@ -242,7 +242,7 @@ impl AstPathTerminator {
             // Rename
             |reader| {
                 let real_id = util_match_ident(reader)?;
-                let _ = util_match_specific_kw(reader, AstKeyword::As)?;
+                util_match_specific_kw(reader, AstKeyword::As)?;
                 let target_id = util_match_ident(reader)?;
 
                 Some(Self::Rename {
@@ -298,7 +298,7 @@ impl AstVisQualifier {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "pub"
-            let _ = util_match_specific_kw(reader, AstKeyword::Pub)?;
+            util_match_specific_kw(reader, AstKeyword::Pub)?;
 
             // Match optional path list
             let visible_to = AstPathTree::parse_path_parens(reader)?;

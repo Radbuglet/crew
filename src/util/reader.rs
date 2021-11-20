@@ -391,7 +391,7 @@ where
 
 // === Branch matching === //
 
-// ... not sure why this is needed but type inference prefers it so ¯\_(ツ)_/¯
+// ...not sure why this is needed but type inference prefers it so ¯\_(ツ)_/¯
 pub fn helper_call_closure<F, A, R>(fn_: F, arg: A) -> R
 where
     F: FnOnce(A) -> R,

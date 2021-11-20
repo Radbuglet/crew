@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![feature(allocator_api)]
-#![feature(bool_to_option)]
 #![feature(coerce_unsized)]
 #![feature(decl_macro)]
 #![feature(maybe_uninit_array_assume_init)]

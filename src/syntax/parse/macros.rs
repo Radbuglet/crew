@@ -13,7 +13,7 @@ impl AstAnyAttrMacro {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<(bool, Self)> {
         reader.lookahead(|reader| {
             // Match @ symbol
-            let _ = util_match_punct(reader, PunctChar::At, None)?;
+            util_match_punct(reader, PunctChar::At, None)?;
 
             // Match ! symbol
             let is_inner = util_match_punct(reader, PunctChar::Exclamation, None).is_some();

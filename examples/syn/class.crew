@@ -1,42 +1,18 @@
 pub class MyClass {
-    var field_1: Type;
+	type MyAlias = path::to::Type<With = Generics>;
 
-    @WithAttribute
-    @WithAttribute(and arguments)
-    val field_2: Type;
+	in type MyGeneric: path::to::extension = other::ty;
 
-    val type_with_generics: (Type<B, C, D = E<F, G>, A = B<C = D, E = (F, G)>>, OtherType<()>);
+	fn test_1<A: My::Type::Here<Foo = Bar, Baz>, B, C: B>(a: A, b: B) -> C {
+		...
+	}
 
-    pub
-    pub(some::path::here)
-    pub(yes::we::support::{trees, *})
-    val field_3: Whee;
+	pub static impl(foo.bar) fn test_2(a: TypeA, b: TypeB) {
+		...
+	}
 
-    static val field_4: Whee;
+	pub in fn proto_1(a: B);
+	pub in fn proto_2<D>(c: D) -> (u32, i32);
 
-    pub static @Foo pub(foo::bar) @Bar val baz: Maz;
-
-    static in static pub pub static in(foo::bar::{path, here}) @Test out(dynamic, _, My<Type = Here>) val foo: Foo;
-
-    pub {
-        val this: Is<A = (Block)>;
-    }
-
-    {
-        {
-            val this_is_nested: and::unqualified<()>;
-        }
-
-        pub(path::here) val huzzah: other::path::here;
-    }
-}
-
-pub class MyOtherClass {
-    pub static {
-        val all_my_statics: ::Here<self::paths::work::here::too>;
-    }
-
-    impl(path.to.input._) {
-        on foo as bar;
-    }
+	val foo: Bar;
 }

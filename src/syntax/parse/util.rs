@@ -5,7 +5,8 @@ use crate::syntax::token::{
 use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
 
-pub const TURBO: &'static [PunctChar] = &[PunctChar::Colon, PunctChar::Colon];
+pub const TURBO: &'static [PunctChar] = &[PunctChar::Colon, PunctChar::Colon]; // `::`
+pub const FUNC_ARROW: &'static [PunctChar] = &[PunctChar::Dash, PunctChar::Greater]; // `->`
 
 enum_meta! {
     #[derive(Debug)]
@@ -13,6 +14,7 @@ enum_meta! {
         Pub = "pub",
         Crate = "crate",
         Self_ = "self",
+        SelfTy = "Self",
         As = "as",
         Class = "class",
         Enum = "enum",
@@ -39,6 +41,7 @@ enum_meta! {
         Hole = "_",
         Dynamic = "dynamic",
         Super = "super",
+        Type = "type",
 
         // === Reserved === //
         Abstract = "abstract",
@@ -158,4 +161,8 @@ pub fn util_punct_matcher(punct: PunctChar) -> impl Fn(&mut TokenStreamReader) -
 
 pub fn util_match_turbo(reader: &mut TokenStreamReader) -> Option<Span> {
     util_match_punct_seq(reader, TURBO)
+}
+
+pub fn util_match_func_arrow(reader: &mut TokenStreamReader) -> Option<Span> {
+    util_match_punct_seq(reader, FUNC_ARROW)
 }

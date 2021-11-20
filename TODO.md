@@ -22,11 +22,8 @@
 - [ ] Object categories should be nestable
 - [ ] Enum meta and object categories should support generics
 - [ ] `Readers` should support mutable semantics
-- [ ] We should make some more `Reader` adapters
-- [ ] We should really look into the efficiency of `Reader` backtracking.
 - [ ] `Folders` should support the closure-return system
 - [ ] The `Folder` API can be improved significantly.
-- [ ] We should move to a component-based allocation scheme to reduce the number of times we recreate objects.
 - [ ] Parsing loads the entire file into memory
 - [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples.
 - [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
@@ -53,7 +50,9 @@
 ## Parser
 
 - [ ] Implement simple "production rules" style grammar.
-- [ ] Implement diagnostic and error recovery system.
+- [ ] Generalize parser traits.
+- [ ] Implement diagnostic.
+- [ ] Implement error recovery.
 - [ ] Optimize matching system
 - [ ] Track source spans for diagnostics later on.
 - [ ] Test suite
@@ -71,15 +70,15 @@
 - [ ] Error propagation (`?`) syntax with implicit conversion
 - [ ] `return` to named block
 - [ ] `break`/`continue`/`return` within specific closures that support it (done by propagating a `ControlFlow<T, L>` result object)
-- [ ] Garbage collection with support for finalizers, cleanup hooks, and weak references.
-- [ ] User-defined value types through `struct`.
+- [ ] Garbage collection with support for finalizers, cleanup hooks, and weak references. GC pointers are just smart pointers in userland, with deref handled through typical exposition.
+- [ ] Also support `RCs` and `Boxes` in userland using the exposed allocator API. Allocators can be passed as object inputs.
 - [ ] Combine Java-style enum metadata with Rust-style sum type enums
 - [ ] Actual `statics`
 - [ ] Programmatic `TokenStream` macros (support macros by example?).
 - [ ] Attribute macros which can operate on a typed IR
-- [ ] Apply qualifiers to blocks, allow qualifiers to span several lines
-- [ ] Type aliases qualified with `in` as an alternative to generics.
-- [ ] Remote qualifiers using the `<qualifier> on <item>` syntax. Mostly used for `impl`.
+- [x] Apply qualifiers to blocks, allow qualifiers to span several lines
+- [x] Type aliases qualified with `in` as an alternative to generics.
+- [x] Remote qualifiers using the `<qualifier> on <item>` syntax. Mostly used for `impl`.
 - [ ] Class/tuple deconstruction
 - [ ] Operator overloading (differentiate between assign and copy)
 - [ ] Reflection
@@ -89,3 +88,9 @@
 - [ ] Unified `async` and iterator handling through coroutines.
 - [ ] No required runtime, allow host to decide which function is the entry point.
 - [ ] `static` is handled by creating an associated singleton class instance. The static singleton is accessed by the class' name. In a class context, `static` annotates arbitrary items to mark them as going in the singleton instead of in the class instance. The only functional difference between `static` items and normal items is that fields must either have an initialization routine or the class must define a static initializer block. This means that static classes can expose other classes including `IDefault`, an interface which allows users to skip that field while directly instantiating a class.
+- [ ] Support `on path.to._` syntax.
+- [ ] Support move and copy semantics with user-defined `Drop` handlers. Objects with unqualified `in` are unsized and stored as VLAs. When taking ownership of a nested component which depends on its parents, cast the entire allocation to that unsized component.
+- [ ] Inline classes (basically Java's inline implementation of abstract classes feature)
+- [ ] Struct types (essentially tuples with named fields).
+- [ ] Full relational type syntax. (e.g. `:>`, `:<`, `=`, and `:` as an alias for `:<`)
+- [ ] Function expression syntax.

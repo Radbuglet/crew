@@ -112,7 +112,7 @@ impl AstModModule {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match mod keyword
-            let _ = util_match_specific_kw(reader, AstKeyword::Mod)?;
+            util_match_specific_kw(reader, AstKeyword::Mod)?;
 
             // Match module name
             let name = util_match_ident(reader)?;
@@ -125,7 +125,7 @@ impl AstModModule {
 
             // Otherwise, match the semicolon
             if inline.is_none() {
-                let _ = util_match_punct(reader, PunctChar::Semicolon, None)?;
+                util_match_punct(reader, PunctChar::Semicolon, None)?;
             }
 
             Some(Self {
@@ -161,13 +161,13 @@ impl AstModUse {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "use"
-            let _ = util_match_specific_kw(reader, AstKeyword::Use)?;
+            util_match_specific_kw(reader, AstKeyword::Use)?;
 
             // Match tree
             let path = AstPathTree::parse(reader)?;
 
             // Match semicolon
-            let _ = util_match_punct(reader, PunctChar::Semicolon, None)?;
+            util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self { path })
         })
@@ -183,7 +183,7 @@ pub struct AstModClass {
 impl AstModClass {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
-            let _ = util_match_specific_kw(reader, AstKeyword::Class)?;
+            util_match_specific_kw(reader, AstKeyword::Class)?;
             let name = util_match_ident(reader)?;
             let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
             let items = AstClassItem::parse_group_inner(&mut group.reader())?;
