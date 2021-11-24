@@ -1,4 +1,3 @@
-pub mod alloc;
 pub mod backing;
 pub mod enum_utils;
 pub mod folder;

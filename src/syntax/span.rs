@@ -14,6 +14,7 @@ use thiserror::Error;
 
 // === Logical source === //
 
+/// A source file from a given path. Has [Arc] clone semantics.
 #[derive(Clone)]
 pub struct SourceFile {
     arc: Arc<SourceFileInner>,
@@ -27,7 +28,7 @@ struct SourceFileInner {
 impl SourceFile {
     pub fn dummy() -> (Self, Span, FileLoc) {
         let file = SourceFile::from_bytes("DUMMY_FILE".into(), Vec::new());
-        let loc = file.head();
+        let loc = file.head_loc();
         let span = Span::new(&loc, &loc);
         (file, span, loc)
     }
@@ -47,7 +48,7 @@ impl SourceFile {
         }
     }
 
-    pub fn head(&self) -> FileLoc {
+    pub fn head_loc(&self) -> FileLoc {
         FileLoc {
             file: self.clone(),
             raw: FileLocRaw::HEAD,
@@ -58,8 +59,16 @@ impl SourceFile {
         self.arc.path.as_path()
     }
 
+    pub fn bytes(&self) -> &[u8] {
+        &self.arc.bytes
+    }
+
     pub fn reader(&self) -> FileReader {
         FileReader::new(self, &self.arc.bytes, FileLocRaw::HEAD)
+    }
+
+    fn marshall_name(&self) -> &str {
+        self.arc.path.to_str().unwrap_or("???")
     }
 }
 
@@ -84,6 +93,7 @@ impl Debug for SourceFile {
     }
 }
 
+/// An inclusive span of characters in a [SourceFile].
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Span {
     file: SourceFile,
@@ -93,13 +103,17 @@ pub struct Span {
 
 impl Display for Span {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(
-            f,
-            "{}-{}@{:?}",
-            self.start.pos,
-            self.end.pos,
-            self.file.borrow().path()
-        )
+        if self.start.pos.line != self.end.pos.line {
+            write!(
+                f,
+                "{}:{}-{}",
+                self.file.marshall_name(),
+                self.start.pos,
+                self.end.pos,
+            )
+        } else {
+            write!(f, "{}:{}", self.file.marshall_name(), self.start.pos)
+        }
     }
 }
 
@@ -148,11 +162,19 @@ impl Span {
         }
     }
 
+    pub fn start_pos(&self) -> FilePos {
+        self.start.pos
+    }
+
     pub fn end(&self) -> FileLoc {
         FileLoc {
             file: self.file().clone(),
             raw: self.end,
         }
+    }
+
+    pub fn end_pos(&self) -> FilePos {
+        self.end.pos
     }
 
     fn set_pair_unchecked(&mut self, a: FileLocRaw, b: FileLocRaw) {
@@ -189,6 +211,7 @@ impl Span {
     }
 }
 
+/// A location in a file.
 #[derive(Debug, Clone, Hash)]
 pub struct FileLoc {
     file: SourceFile,
@@ -196,6 +219,28 @@ pub struct FileLoc {
 }
 
 impl FileLoc {
+    pub fn line_start_pos(&self) -> FilePos {
+        FilePos {
+            line: self.raw.pos.line,
+            col: 0,
+        }
+    }
+
+    pub fn line_start_index(&self) -> usize {
+        self.raw.line_begin
+    }
+
+    pub fn line_start(&self) -> Self {
+        Self {
+            file: self.file.clone(),
+            raw: FileLocRaw {
+                line_begin: self.line_start_index(),
+                index: self.line_start_index(),
+                pos: self.line_start_pos(),
+            },
+        }
+    }
+
     pub fn pos(&self) -> FilePos {
         self.raw.pos
     }
@@ -204,16 +249,24 @@ impl FileLoc {
         self.raw.index
     }
 
-    pub fn line(&self) -> usize {
-        self.raw.line()
+    pub fn displayed_line(&self) -> usize {
+        self.raw.pos.displayed_line()
     }
 
-    pub fn col(&self) -> usize {
-        self.raw.col()
+    pub fn displayed_col(&self) -> usize {
+        self.raw.pos.displayed_col()
     }
 
     pub fn file(&self) -> &SourceFile {
         self.file.borrow()
+    }
+
+    pub fn reader(&self) -> FileReader {
+        FileReader::new(
+            self.file(),
+            &self.file.bytes()[self.char_index()..],
+            self.raw,
+        )
     }
 
     pub fn as_span(&self) -> Span {
@@ -231,7 +284,7 @@ impl PartialEq for FileLoc {
 impl PartialOrd<Self> for FileLoc {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.file() == other.file() {
-            Some(self.raw.index.cmp(&other.raw.index))
+            Some(self.raw.cmp(&other.raw))
         } else {
             None
         }
@@ -240,29 +293,29 @@ impl PartialOrd<Self> for FileLoc {
 
 impl Display for FileLoc {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}@{:?}", self.raw.pos, self.file.borrow().path())
+        write!(
+            f,
+            "{}:{}:{}",
+            self.file.marshall_name(),
+            self.displayed_line(),
+            self.displayed_col(),
+        )
     }
 }
 
 #[derive(Debug, Copy, Clone, Hash)]
 struct FileLocRaw {
     pub index: usize,
+    pub line_begin: usize,
     pub pos: FilePos,
 }
 
 impl FileLocRaw {
     pub const HEAD: Self = Self {
         index: 0,
+        line_begin: 0,
         pos: FilePos::HEAD,
     };
-
-    pub fn line(&self) -> usize {
-        self.pos.line
-    }
-
-    pub fn col(&self) -> usize {
-        self.pos.col
-    }
 }
 
 impl Eq for FileLocRaw {}
@@ -293,11 +346,19 @@ pub struct FilePos {
 
 impl FilePos {
     pub const HEAD: Self = Self { line: 0, col: 0 };
+
+    pub fn displayed_line(&self) -> usize {
+        self.line + 1
+    }
+
+    pub fn displayed_col(&self) -> usize {
+        self.col + 1
+    }
 }
 
 impl Display for FilePos {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}:{}", self.line + 1, self.col + 1)
+        write!(f, "{}:{}", self.displayed_line(), self.displayed_col())
     }
 }
 
@@ -320,7 +381,12 @@ impl PartialOrd for FilePos {
 
 #[derive(Clone)]
 struct CharReader<'a> {
+    /// The remaining byte stream. [consume](CharReader::consume) reads from the beginning of this
+    /// slice.
     source: &'a [u8],
+
+    /// The index of the next character assuming it were to exist. Use [next_index] to obtain an
+    /// actually valid index.
     index: usize,
 }
 
@@ -329,11 +395,19 @@ impl<'a> CharReader<'a> {
         Self { source, index }
     }
 
-    pub fn index(&self) -> usize {
-        self.index
+    pub fn next_index(&self) -> usize {
+        if self.source.len() > 0 {
+            self.index
+        } else {
+            self.index - 1
+        }
     }
+}
 
-    pub fn consume(&mut self) -> Result<Option<char>, CharReadErr> {
+impl<'a> StreamReader for CharReader<'a> {
+    type Res = Result<Option<char>, CharReadErr>;
+
+    fn consume(&mut self) -> Self::Res {
         let mut stream = self.source.iter();
 
         // Consume char
@@ -352,10 +426,6 @@ impl<'a> CharReader<'a> {
 
         Ok(char)
     }
-
-    pub fn peek(&self) -> Result<Option<char>, CharReadErr> {
-        self.clone().consume()
-    }
 }
 
 impl LookaheadReader for CharReader<'_> {}
@@ -368,11 +438,19 @@ enum CharReadErr {
 
 #[derive(Clone)]
 pub struct FileReader<'a> {
+    /// The file we're reading from.
     file: &'a SourceFile,
+
+    /// The underlying character stream reader. Some atoms may be formed of more than one Unicode
+    /// codepoint.
     reader: CharReader<'a>,
-    next_pos: FilePos,
-    prev_pos: FilePos,
-    prev_idx: usize,
+
+    /// The location of the next atom to be returned through [consume](FileReader::consume).
+    next_pos: FileLocRaw,
+
+    /// The location of the latest atom to be returned by [consume](FileReader::consume). Defaults to
+    /// the starting position if nothing has been read yet.
+    prev_pos: FileLocRaw,
 }
 
 impl<'a> FileReader<'a> {
@@ -380,12 +458,12 @@ impl<'a> FileReader<'a> {
         Self {
             file,
             reader: CharReader::new(source, loc_raw.index),
-            next_pos: loc_raw.pos,
-            prev_pos: loc_raw.pos,
-            prev_idx: 0,
+            next_pos: loc_raw,
+            prev_pos: loc_raw,
         }
     }
 
+    /// Consumes from the underlying character `reader` without updating the [FileReader]'s state.
     fn consume_untracked(&mut self) -> ReadAtom {
         match self.reader.consume() {
             // Match CRLF
@@ -419,10 +497,7 @@ impl<'a> FileReader<'a> {
     pub fn prev_loc(&self) -> FileLoc {
         FileLoc {
             file: self.file().clone(),
-            raw: FileLocRaw {
-                index: self.reader.index() - 1,
-                pos: self.next_pos,
-            },
+            raw: self.prev_pos,
         }
     }
 
@@ -430,10 +505,7 @@ impl<'a> FileReader<'a> {
     pub fn next_loc(&self) -> FileLoc {
         FileLoc {
             file: self.file().clone(),
-            raw: FileLocRaw {
-                index: self.reader.index(),
-                pos: self.next_pos,
-            },
+            raw: self.next_pos,
         }
     }
 
@@ -448,21 +520,22 @@ impl StreamReader for FileReader<'_> {
     fn consume(&mut self) -> Self::Res {
         // Save previous state
         self.prev_pos = self.next_pos;
-        self.prev_idx = self.reader.index();
 
         // Consume atom
         let result = self.consume_untracked();
+        self.next_pos.index = self.reader.next_index();
 
         // Update positional state
         match result {
             // Most text editors seem to treat codepoints as characters.
-            ReadAtom::Codepoint(_) => self.next_pos.col += 1,
+            ReadAtom::Codepoint(_) => self.next_pos.pos.col += 1,
             // These will probably show up as illegal character boxes in the editor.
-            ReadAtom::Unknown(_) => self.next_pos.col += 1,
+            ReadAtom::Unknown(_) => self.next_pos.pos.col += 1,
             // Newlines, valid or not, are typically treated as newlines by editors.
             ReadAtom::Newline(_) => {
-                self.next_pos.line += 1;
-                self.next_pos.col = 0;
+                self.next_pos.pos.line += 1;
+                self.next_pos.pos.col = 0;
+                self.next_pos.line_begin = self.next_pos.index;
             }
             ReadAtom::Eof => {}
         }

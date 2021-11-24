@@ -7,10 +7,12 @@
 #![feature(maybe_uninit_uninit_array)]
 #![feature(str_internals)]
 #![feature(unsize)]
+#![feature(int_log)]
 
 use crate::syntax::parse::module::AstModule;
-use crate::syntax::span::SourceFile;
+use crate::syntax::span::{ReadAtom, SourceFile};
 use crate::syntax::token::tokenize_file;
+use crate::util::reader::StreamReader;
 use std::path::PathBuf;
 
 pub mod syntax;
