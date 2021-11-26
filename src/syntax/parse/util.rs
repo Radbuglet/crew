@@ -5,6 +5,8 @@ use crate::syntax::token::{
 use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
 
+// === Syntactic element matchers === //
+
 pub const TURBO: &'static [PunctChar] = &[PunctChar::Colon, PunctChar::Colon]; // `::`
 pub const FUNC_ARROW: &'static [PunctChar] = &[PunctChar::Dash, PunctChar::Greater]; // `->`
 

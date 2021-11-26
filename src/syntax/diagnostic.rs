@@ -4,12 +4,6 @@ use crate::{ReadAtom, StreamReader};
 use colored::{Color, Colorize};
 use std::fmt::{Display, Formatter};
 
-// === Results === //
-
-// ...
-
-// === Printing === //
-
 enum_meta! {
     #[derive(Debug)]
     pub enum(MessageTypeMeta) MessageType {

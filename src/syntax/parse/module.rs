@@ -18,15 +18,7 @@ pub struct AstModule {
 impl AstModule {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         // Match inner attributes
-        let mut inner_attrs = Vec::new();
-
-        reader.consume_while(|reader| match AstAnyAttrMacro::parse(reader) {
-            Some((true, attr)) => {
-                inner_attrs.push(attr);
-                true
-            }
-            _ => false,
-        });
+        let inner_attrs = reader.consume_while(AstAnyAttrMacro::parse_inner).collect();
 
         // Match parts
         let parts = Self::parse_parts(reader)?;
@@ -36,31 +28,18 @@ impl AstModule {
 
     pub fn parse_parts(reader: &mut TokenStreamReader) -> Option<Vec<AstModItem>> {
         reader.lookahead(|reader| {
-            let mut parts = Vec::new();
+            // Collect parts
+            let parts = reader
+                .consume_while(|reader| {
+                    // Collect qualifiers
+                    let qualifiers = reader.consume_while(AstModQualifier::parse).collect();
 
-            reader.consume_while(|reader| {
-                let mut qualifiers = Vec::new();
+                    // Collect item
+                    let kind = AstModItemKind::parse(reader)?;
 
-                // Collect qualifiers
-                reader.consume_while(|reader| {
-                    if let Some(qualifier) = AstModQualifier::parse(reader) {
-                        qualifiers.push(qualifier);
-                        true
-                    } else {
-                        false
-                    }
-                });
-
-                // Collect item
-                let kind = match AstModItemKind::parse(reader) {
-                    Some(kind) => kind,
-                    None => return false,
-                };
-
-                parts.push(AstModItem { qualifiers, kind });
-
-                true
-            });
+                    Some(AstModItem { qualifiers, kind })
+                })
+                .collect();
 
             // Expect EOF
             if !reader.consume().is_none() {

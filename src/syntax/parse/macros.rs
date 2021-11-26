@@ -27,6 +27,20 @@ impl AstAnyAttrMacro {
             Some((is_inner, Self { path, arg }))
         })
     }
+
+    pub fn parse_inner(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| match Self::parse(reader) {
+            Some((true, attr)) => Some(attr),
+            _ => None,
+        })
+    }
+
+    pub fn parse_outer(reader: &mut TokenStreamReader) -> Option<Self> {
+        reader.lookahead(|reader| match Self::parse(reader) {
+            Some((false, attr)) => Some(attr),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -36,9 +50,8 @@ pub struct AstAttrQualifier {
 
 impl AstAttrQualifier {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| match AstAnyAttrMacro::parse(reader) {
-            Some((false, attr)) => Some(Self { attr }),
-            _ => None,
+        Some(Self {
+            attr: AstAnyAttrMacro::parse_outer(reader)?,
         })
     }
 }

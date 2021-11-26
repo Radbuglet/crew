@@ -78,6 +78,7 @@ pub struct AstClassItemField {
     pub prefix: AstFieldType,
     pub name: String,
     pub ty: AstType,
+    pub impl_block: Option<Vec<AstClassItem>>,
 }
 
 impl AstClassItemField {
@@ -94,13 +95,26 @@ impl AstClassItemField {
             util_match_punct(reader, PunctChar::Colon, None)?;
             let ty = AstType::parse(reader)?;
 
+            // Match optional impl block
+            let impl_block = reader.lookahead(|reader| {
+                if util_match_specific_kw(reader, AstKeyword::Impl).is_some() {
+                    let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
+                    Some(Some(AstClassItem::parse_group_inner(&mut group.reader())?))
+                } else {
+                    Some(None)
+                }
+            })?;
+
             // Match semicolon
-            util_match_punct(reader, PunctChar::Semicolon, None)?;
+            if impl_block.is_none() {
+                util_match_punct(reader, PunctChar::Semicolon, None)?;
+            }
 
             Some(Self {
                 prefix,
                 name: name.take_text(),
                 ty,
+                impl_block,
             })
         })
     }
@@ -472,9 +486,7 @@ impl AstImplPath {
         let has_hole = reader
             .lookahead(|reader| {
                 delimited.next(reader)?;
-                util_match_specific_kw(reader, AstKeyword::Hole)?;
-
-                Some(())
+                util_match_specific_kw(reader, AstKeyword::Hole)
             })
             .is_some();
 

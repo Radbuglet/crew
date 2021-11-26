@@ -72,29 +72,6 @@ impl AstPathPart {
             }
         )
     }
-
-    pub fn parse_list(reader: &mut TokenStreamReader, expect_leading_turbo: bool) -> Vec<Self> {
-        let mut parts = Vec::new();
-        let mut delimited = DelimiterMatcher::new(util_match_turbo, expect_leading_turbo);
-
-        reader.consume_while(|reader| {
-            // Expect delimiter
-            if delimited.next(reader).is_none() {
-                return false;
-            }
-
-            // Push path part
-            let part = match Self::parse(reader) {
-                Some(part) => part,
-                None => return false,
-            };
-
-            parts.push(part);
-            true
-        });
-
-        parts
-    }
 }
 
 // === Expr paths === //
@@ -112,7 +89,16 @@ impl AstPathDirect {
             let root = AstPathRoot::parse(reader);
 
             // Match subsequent parts
-            let parts = AstPathPart::parse_list(reader, root.expects_turbo());
+            let mut delimited = DelimiterMatcher::new(util_match_turbo, root.expects_turbo());
+            let parts = reader
+                .consume_while(|reader| {
+                    // Expect delimiter
+                    delimited.next(reader)?;
+
+                    // Push path part
+                    AstPathPart::parse(reader)
+                })
+                .collect::<Vec<_>>();
 
             // Determine whether this is an actual pattern match
             if parts.is_empty() {
@@ -152,33 +138,31 @@ impl AstPathTree {
     }
 
     pub fn parse_path_parens(reader: &mut TokenStreamReader) -> Option<Vec<AstPathTree>> {
-        if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
-            // TODO: We should probably add a generic list parser.
-            // ^ This idiom shows up everywhere but I don't yet know how to make a proper abstraction
-            // for it.
+        reader.lookahead(|reader| {
+            if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
+                let mut delimited =
+                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
 
-            let mut paths = Vec::new();
-            let mut reader = paren.reader();
+                // Collect paths
+                // FIXME: Make this generic and add support for optional trailing commas
+                let paths = paren
+                    .reader()
+                    .consume_while(|reader| {
+                        delimited.next(reader)?;
+                        AstPathTree::parse(reader)
+                    })
+                    .collect();
 
-            // Match interior list
-            let mut delimited = DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-
-            while let Some(_) = delimited.next(&mut reader) {
-                // The node is optional (e.g. for trailing commas)
-                if let Some(tree) = AstPathTree::parse(&mut reader) {
-                    paths.push(tree);
+                // Match inner group EOF
+                if reader.consume().is_some() {
+                    return None;
                 }
-            }
 
-            // Match inner group EOF
-            if reader.consume().is_some() {
-                return None;
+                Some(paths)
+            } else {
+                Some(Vec::new())
             }
-
-            Some(paths)
-        } else {
-            Some(Vec::new())
-        }
+        })
     }
 }
 

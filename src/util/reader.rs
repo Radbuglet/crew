@@ -31,34 +31,33 @@ use std::marker::PhantomData;
 /// There are two contexts in which a path can be used: a `use` item where each path can be ended
 /// with a `"::" + <terminator>` and in expressions where this is not possible. It's tempting to
 /// construct a match function that just matches this first "simple path" part and then compose that
-/// with another function to match the optional terminator. However, doing so complicates diagnostic
+/// with another function to match the optional terminator, however doing so complicates diagnostic
 /// handling.
 ///
-/// In a non-composed context, we could say that turbo (`::`) delimiters must be followed by either
-/// a non-keyword identifier or a braced group of nested paths. However, in allowing users to define
-/// syntax which overlaps with the "unambiguous" section of the grammar, we must now silently accept
-/// trailing terminators. While this shouldn't enable any new illegal grammar (otherwise, the grammar
-/// would have been ambiguous), the diagnostics become much less contextual:
+/// In a non-composed implementation of a path tree parser, we could say that turbo (`::`) delimiters
+/// must be followed by either a non-keyword identifier or a braced group of nested paths. In the
+/// composed context where we concatenate simple `$(part:ident)::*` matching behavior with the optional
+/// `$(:: $terminator:PathTree)?` syntax extension, we introduce a grammatical overlap as the simple
+/// parser must now ignore incomplete turbos to allow subsequent matchers to handle them. While this
+/// shouldn't have enabled any new illegal grammar (otherwise, the grammar would have been ambiguous),
+/// the diagnostics become much less contextual:
 ///
 /// ```no_run
 ///  use foo::bar::baz::;
-///  //               ^ the error is technically the turbo not being a semicolon.
-///  //                 ^ however, the error is intuitively the lack of a valid pattern after the turbo.
+///  //               ^ the error is technically the path not being followed by a `:: + <group>` or a `;`.
+///  //                 ^ however, the actual list of valid grammatical elements should also include `idents`.
 ///
-///  fn my_func() -> u32 {
-///  // Here, this expression is parsed as two separate paths:
-///      maz::laz::SOME_STATIC::crate + 5
-///  //  ^ path 1             ^ path 2
-///  // This happens because "crate" is only valid at the start of a simple path.
-///  // The error will now happen during expression folding instead of during atomization.
-///  }
+/// static val foo: bar::baz:: = ...;
+/// //                      ^ the error is technically the simple path not being followed by a `=` or `;`
+/// //                         ^ however, the error is intuitively the lack of an identifier after the turbo.
 /// ```
 ///
 /// To fix this, matcher functions can take matcher closures to extend their grammar. In this case,
 /// the `match_simple_path` can accept a closure taking a mutable [LookaheadReader] reference which
 /// will provide an additional way to match an unclosed terminator. This both enables the primary
-/// function to detect illegal terminators (instead of ignoring them) and allows the grammar
-/// extensions to work off context from the parent function which would have otherwise been discarded.
+/// function to detect illegal terminators (since the closure could produce the appropriate error in
+/// the correct context) and would allow the grammar extensions to work off context from the parent
+/// function which would have otherwise been discarded.
 ///
 /// ## Cursor Recovery
 ///
@@ -94,6 +93,10 @@ use std::marker::PhantomData;
 /// //            left of the statement keyword as the expression and use the keyword as the next
 /// //            token to return once the parse function is recovered.
 /// ```
+///
+/// Alternatively, match functions could accept closures for callbacks specifically for error handling
+/// and then propagate the function's return result. That way, users can decide whether to treat the
+/// error as a hard error or attempt cursor recovery with the grammatical parent's additional context.
 ///
 /// The [lookahead] method commits or discards the cursor state depending on the "truthiness" of the
 /// closure's return value. It may seem weird to return a `Some(Err(...))` to represent a recovered
@@ -509,26 +512,3 @@ impl<T, E> StreamResult for Result<Option<T>, E> {
         }
     }
 }
-
-// === Generic readers === //
-
-#[derive(Debug, Clone)]
-pub struct IterReader<I> {
-    iter: I,
-}
-
-impl<I> IterReader<I> {
-    pub fn new(iter: I) -> Self {
-        Self { iter }
-    }
-}
-
-impl<I: Iterator> StreamReader for IterReader<I> {
-    type Res = Option<I::Item>;
-
-    fn consume(&mut self) -> Self::Res {
-        self.iter.next()
-    }
-}
-
-impl<I: Clone> LookaheadReader for IterReader<I> {}

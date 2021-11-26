@@ -19,5 +19,7 @@ pub class MyClass {
 	pub in fn proto_1(a: B);
 	pub in fn proto_2<D>(c: D) -> (u32, i32);
 
-	val foo: Bar;
+	val foo: Bar impl {
+        type Foo = Maz;
+	}
 }

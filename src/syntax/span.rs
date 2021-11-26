@@ -8,16 +8,16 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::{from_utf8, Utf8Error};
-use std::sync::Arc;
 use thiserror::Error;
 
 // === Logical source === //
 
-/// A source file from a given path. Has [Arc] clone semantics.
+/// A source file from a given path. Has [Rc] clone semantics.
 #[derive(Clone)]
 pub struct SourceFile {
-    arc: Arc<SourceFileInner>,
+    rc: Rc<SourceFileInner>,
 }
 
 struct SourceFileInner {
@@ -44,7 +44,7 @@ impl SourceFile {
 
     pub fn from_bytes(path: PathBuf, bytes: Vec<u8>) -> Self {
         Self {
-            arc: Arc::new(SourceFileInner { path, bytes }),
+            rc: Rc::new(SourceFileInner { path, bytes }),
         }
     }
 
@@ -56,39 +56,39 @@ impl SourceFile {
     }
 
     pub fn path(&self) -> &Path {
-        self.arc.path.as_path()
+        self.rc.path.as_path()
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.arc.bytes
+        &self.rc.bytes
     }
 
     pub fn reader(&self) -> FileReader {
-        FileReader::new(self, &self.arc.bytes, FileLocRaw::HEAD)
+        FileReader::new(self, &self.rc.bytes, FileLocRaw::HEAD)
     }
 
     fn marshall_name(&self) -> &str {
-        self.arc.path.to_str().unwrap_or("???")
+        self.rc.path.to_str().unwrap_or("???")
     }
 }
 
 impl Hash for SourceFile {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_usize(Arc::as_ptr(&self.arc) as usize)
+        state.write_usize(Rc::as_ptr(&self.rc) as usize)
     }
 }
 
 impl Eq for SourceFile {}
 impl PartialEq for SourceFile {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.arc, &other.arc)
+        Rc::ptr_eq(&self.rc, &other.rc)
     }
 }
 
 impl Debug for SourceFile {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("SourceFile")
-            .field("path", &self.arc.path)
+            .field("path", &self.rc.path)
             .finish_non_exhaustive()
     }
 }
@@ -144,7 +144,7 @@ impl Span {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.file.arc.bytes[self.start.index..=self.end.index]
+        &self.file.rc.bytes[self.start.index..=self.end.index]
     }
 
     pub fn try_as_str(&self) -> Result<&str, Utf8Error> {
@@ -269,7 +269,7 @@ impl FileLoc {
         )
     }
 
-    pub fn as_span(&self) -> Span {
+    pub fn char_span(&self) -> Span {
         Span::new(self, self)
     }
 }

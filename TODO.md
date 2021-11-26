@@ -4,9 +4,10 @@
 
 - [x] Trace logging
 - [ ] Efficient data structures:
-  - [x] ~~Bump allocator~~ (`bumaplo` is sufficiently powerful when using the allocator API)
+  - [ ] Bump allocator
   - [ ] Fork `std` collections
   - [ ] Interner
+  - [ ] Contiguous allocation optimization
 - [x] Macro to automate object category generation
 - [ ] Create in-place array folding mechanisms:
   - [x] Base interface
@@ -18,16 +19,12 @@
 
 ### Nitpicks
 
-- [ ] Enum meta should support variants
-- [ ] Object categories should be nestable
-- [ ] Enum meta and object categories should support generics
-- [ ] `Readers` should support mutable semantics
+- [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something
+- [ ] `TokenStreams` should also have a slice type
 - [ ] `Folders` should support the closure-return system
-- [ ] The `Folder` API can be improved significantly.
+- [ ] The `Folder` API can be improved significantly
 - [ ] Parsing loads the entire file into memory
-- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples.
-- [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
-- [ ] `TokenStreams` should also have a slice type.
+- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples
 
 ## Tokenizer
 

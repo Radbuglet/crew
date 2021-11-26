@@ -32,13 +32,13 @@ use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
-use std::sync::Arc;
+use std::rc::Rc;
 
 // === Token Stream === //
 
 #[derive(Debug, Default, Clone)]
 pub struct TokenStream {
-    tokens: Arc<Vec<Token>>,
+    tokens: Rc<Vec<Token>>,
 }
 
 impl TokenStream {
@@ -48,7 +48,7 @@ impl TokenStream {
 
     pub fn new_with(tokens: Vec<Token>) -> Self {
         Self {
-            tokens: Arc::new(tokens),
+            tokens: Rc::new(tokens),
         }
     }
 
@@ -57,13 +57,13 @@ impl TokenStream {
     }
 
     pub fn tokens_mut(&mut self) -> &mut Vec<Token> {
-        Arc::make_mut(&mut self.tokens)
+        Rc::make_mut(&mut self.tokens)
     }
 
     pub fn into_vec(self) -> Vec<Token> {
-        match Arc::try_unwrap(self.tokens) {
+        match Rc::try_unwrap(self.tokens) {
             Ok(vec) => vec,
-            Err(arc) => (*arc).clone(),
+            Err(rc) => (*rc).clone(),
         }
     }
 }
@@ -484,7 +484,7 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
 
     // Start tokenizing
     let mut stack = vec![StackFrame::Group(TokenGroup::new(
-        reader.next_loc().as_span(),
+        reader.next_loc().char_span(),
         GroupDelimiter::File,
     ))];
 
@@ -496,7 +496,7 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
                     // Group open
                     Some((delimiter, DelimiterMode::Open)) => {
                         stack.push(StackFrame::Group(TokenGroup::new(
-                            reader.next_loc().as_span(),
+                            reader.next_loc().char_span(),
                             delimiter,
                         )));
                         continue;
@@ -1005,15 +1005,11 @@ pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
 }
 
 pub fn string_match_char(reader: &mut FileReader) -> Option<char> {
-    if let Some(char) = reader.lookahead(|reader| match reader.consume() {
+    reader.lookahead(|reader| match reader.consume() {
         ReadAtom::Codepoint(char) => Some(char),
         ReadAtom::Newline(_) => Some('\n'),
         _ => None,
-    }) {
-        return Some(char);
-    }
-
-    None
+    })
 }
 
 pub fn string_match_placeholder_start(reader: &mut FileReader) -> bool {
