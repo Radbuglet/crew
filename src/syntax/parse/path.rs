@@ -67,7 +67,7 @@ impl AstPathPart {
             },
             // Match literal
             |reader| match util_match_ident_or_kw(reader) {
-                Some(IdentOrKw { raw, kw: None }) => Some(Self::Lit(raw.take_text())),
+                Some(IdentOrKw { raw, kw: None }) => Some(Self::Lit(raw.text())),
                 _ => None,
             }
         )
@@ -230,8 +230,8 @@ impl AstPathTerminator {
                 let target_id = util_match_ident(reader)?;
 
                 Some(Self::Rename {
-                    target: real_id.take_text(),
-                    rename: target_id.take_text(),
+                    target: real_id.text(),
+                    rename: target_id.text(),
                 })
             },
             // Tree

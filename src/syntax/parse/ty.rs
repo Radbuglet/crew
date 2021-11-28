@@ -95,7 +95,7 @@ impl AstTypeObjGenerics {
                 // Match param type
                 let ty = AstType::parse(reader)?;
 
-                Some(GenericParamKind::Named(name.take_text(), ty))
+                Some(GenericParamKind::Named(name.text(), ty))
             }],
             // Match unnamed
             [|reader| { Some(GenericParamKind::Unnamed(AstType::parse(reader)?)) }],

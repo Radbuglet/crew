@@ -118,6 +118,7 @@ pub trait LookaheadReader: Clone {
         self.lookahead_raw(handler).into_result()
     }
 
+    /// Same behavior as [lookahead] except it doesn't unwrap the returned [LookaheadResult].
     fn lookahead_raw<F, R>(&mut self, handler: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -131,6 +132,8 @@ pub trait LookaheadReader: Clone {
         res
     }
 
+    /// Forks the reader and peaks ahead without ever committing the result. Will unwrap any returned
+    /// [LookaheadResult]s.
     fn peek_ahead<F, R>(&self, handler: F) -> R::Ret
     where
         F: FnOnce(&mut Self) -> R,
@@ -139,6 +142,9 @@ pub trait LookaheadReader: Clone {
         handler(&mut self.clone()).into_result()
     }
 
+    /// Consumes from the reader while the grammar matches and returns an iterator of the elements
+    /// returned by each iteration. Reader state from unmatched iterations are discarded as if they
+    /// were passed through [lookahead].
     fn consume_while<F, R>(&mut self, handler: F) -> ConsumeWhileIter<Self, F, R>
     where
         F: FnMut(&mut Self) -> R,
@@ -509,6 +515,39 @@ impl<T, E> StreamResult for Result<Option<T>, E> {
             Ok(Some(success)) => Some(Ok(success)),
             Ok(None) => None,
             Err(err) => Some(Err(err)),
+        }
+    }
+}
+
+// === Parse results === //
+
+pub type PResult<T, E> = Option<Result<T, E>>;
+
+pub enum ParseInstr<T, E> {
+    Ok(T),
+    Uncommitted,
+    ErrRestore(E),
+    ErrContinue(E),
+}
+
+impl<T, E> LookaheadResult for ParseInstr<T, E> {
+    type Ret = PResult<T, E>;
+
+    fn is_truthy(&self) -> bool {
+        match self {
+            ParseInstr::Ok(_) => true,
+            ParseInstr::ErrContinue(_) => true,
+            ParseInstr::Uncommitted => false,
+            ParseInstr::ErrRestore(_) => false,
+        }
+    }
+
+    fn into_result(self) -> Self::Ret {
+        match self {
+            ParseInstr::Ok(val) => Some(Ok(val)),
+            ParseInstr::Uncommitted => None,
+            ParseInstr::ErrRestore(err) => Some(Err(err)),
+            ParseInstr::ErrContinue(err) => Some(Err(err)),
         }
     }
 }

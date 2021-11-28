@@ -4,6 +4,13 @@ use crate::{ReadAtom, StreamReader};
 use colored::{Color, Colorize};
 use std::fmt::{Display, Formatter};
 
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub span: Span,
+    pub kind: MessageType,
+    pub text: String,
+}
+
 enum_meta! {
     #[derive(Debug)]
     pub enum(MessageTypeMeta) MessageType {
@@ -24,12 +31,7 @@ pub struct MessageTypeMeta {
     pub color: Color,
 }
 
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub span: Span,
-    pub kind: MessageType,
-    pub text: String,
-}
+// === Diagnostic printing === //
 
 impl Message {
     // FIXME: This code is complete garbage.

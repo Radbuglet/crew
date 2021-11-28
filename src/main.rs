@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![feature(allocator_api)]
+#![feature(build_hasher_simple_hash_one)]
 #![feature(coerce_unsized)]
 #![feature(decl_macro)]
 #![feature(maybe_uninit_array_assume_init)]

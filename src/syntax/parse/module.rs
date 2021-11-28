@@ -108,7 +108,7 @@ impl AstModModule {
             }
 
             Some(Self {
-                name: name.take_text(),
+                name: name.text(),
                 inline,
             })
         })
@@ -168,7 +168,7 @@ impl AstModClass {
             let items = AstClassItem::parse_group_inner(&mut group.reader())?;
 
             Some(Self {
-                name: name.take_text(),
+                name: name.text(),
                 items,
             })
         })

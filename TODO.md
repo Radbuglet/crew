@@ -3,11 +3,10 @@
 ## Infrastructure
 
 - [x] Trace logging
-- [ ] Efficient data structures:
-  - [ ] Bump allocator
-  - [ ] Fork `std` collections
-  - [ ] Interner
-  - [ ] Contiguous allocation optimization
+- [x] Efficient data structures:
+  - [x] Bump allocator
+  - [x] Fork `std` collections
+  - [x] Interner
 - [x] Macro to automate object category generation
 - [ ] Create in-place array folding mechanisms:
   - [x] Base interface
@@ -22,8 +21,7 @@
 - [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something
 - [ ] `TokenStreams` should also have a slice type
 - [ ] `Folders` should support the closure-return system
-- [ ] The `Folder` API can be improved significantly
-- [ ] Parsing loads the entire file into memory
+- [ ] The `Folder` API should support relative and absolute positions.
 - [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples
 
 ## Tokenizer
@@ -38,16 +36,13 @@
   - [ ] Custom delimiters
 - [ ] Finish numeric literal parsing (how do we handle property accesses and ranges)
 - [ ] Preserve doc and delimiter comments
-- [ ] Preserve insignificant characters (e.g. whitespace, comments) for formatting.
-- [ ] Revisit handling of invalid newlines/characters
-- [ ] Reconsider character groups
+- [ ] Reconsider character groups (we might need to look into preventing certain Unicode exploits)
 - [ ] Implement error recovery system
 - [ ] Test suite
 
 ## Parser
 
 - [ ] Implement simple "production rules" style grammar.
-- [ ] Generalize parser traits.
 - [ ] Implement diagnostic.
 - [ ] Implement error recovery.
 - [ ] Optimize matching system

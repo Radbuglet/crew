@@ -13,37 +13,95 @@ pub const FUNC_ARROW: &'static [PunctChar] = &[PunctChar::Dash, PunctChar::Great
 enum_meta! {
     #[derive(Debug)]
     pub enum(&'static str) AstKeyword {
+        /// Visibility specifier
         Pub = "pub",
+
+        /// Path root specifier
         Crate = "crate",
-        Self_ = "self",
+
+        /// Path root and self type specifier
         SelfTy = "Self",
-        As = "as",
-        Class = "class",
-        Enum = "enum",
-        Fn = "fn",
-        Static = "static",
-        Macro = "macro",
-        Use = "use",
-        Mod = "mod",
-        If = "if",
-        Loop = "loop",
-        While = "while",
-        Match = "match",
-        Break = "break",
-        Continue = "continue",
-        Return = "return",
-        Open = "open",
-        In = "in",
-        Out = "out",
-        Impl = "impl",
-        On = "on",
-        Readonly = "readonly",
-        Val = "val",
-        Var = "var",
-        Hole = "_",
-        Dynamic = "dynamic",
+
+        /// `self` class reference specifier
+        Self_ = "self",
+
+        /// An alternative to `^` for specifying parent modules in paths
         Super = "super",
+
+        /// Path renaming, expression casting
+        As = "as",
+
+        /// Module item qualifier
+        Class = "class",
+
+        /// Module item qualifier
+        Enum = "enum",
+
+        /// Module item qualifier
+        Fn = "fn",
+
+        /// Module item qualifier
+        Macro = "macro",
+
+        /// Module item qualifier
+        Use = "use",
+
+        /// Module item qualifier
+        Mod = "mod",
+
+        /// Module item qualifier
         Type = "type",
+
+        /// Variable qualifier
+        Static = "static",
+
+        /// Expression keyword
+        If = "if",
+
+        /// Expression keyword
+        Loop = "loop",
+
+        /// Expression keyword
+        While = "while",
+
+        /// Expression keyword
+        Match = "match",
+
+        /// Expression keyword
+        Break = "break",
+
+        /// Expression keyword
+        Continue = "continue",
+
+        /// Expression keyword
+        Return = "return",
+
+        /// Expression keyword, class item.
+        Val = "val",
+
+        /// Expression keyword, class item.
+        Var = "var",
+
+        /// Class item qualifier
+        Open = "open",
+
+        /// Class item qualifier
+        In = "in",
+
+        /// Class item qualifier
+        Out = "out",
+
+        /// Class item qualifier
+        Impl = "impl",
+
+        /// Class item qualifier
+        On = "on",
+
+        /// Inference hole for types, unused parameter marker
+        Hole = "_",
+
+        /// Used to specify a dynamically determined component
+        Dynamic = "dynamic",
 
         // === Reserved === //
         Abstract = "abstract",
@@ -58,6 +116,7 @@ enum_meta! {
         Async = "async",
         Yield = "yield",
         Override = "override",
+        Readonly = "readonly",
     }
 }
 

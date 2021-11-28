@@ -221,7 +221,7 @@ pub struct TokenIdent {
 }
 
 impl TokenIdent {
-    pub fn take_text(&self) -> String {
+    pub fn text(&self) -> String {
         self.text.clone()
     }
 }

@@ -112,7 +112,7 @@ impl AstClassItemField {
 
             Some(Self {
                 prefix,
-                name: name.take_text(),
+                name: name.text(),
                 ty,
                 impl_block,
             })
@@ -160,8 +160,8 @@ impl AstClassItemRemote {
             util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self {
-                name: name.take_text(),
-                rename_as: rename_as.map(TokenIdent::take_text),
+                name: name.text(),
+                rename_as: rename_as.map(TokenIdent::text),
             })
         })
     }
@@ -193,7 +193,7 @@ impl AstClassItemType {
             util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self {
-                name: name.take_text(),
+                name: name.text(),
                 annotation,
                 equals,
             })
@@ -241,7 +241,7 @@ impl AstClassItemFunc {
                         util_match_punct(reader, PunctChar::Colon, None)?;
                         let ty = AstType::parse(reader)?;
 
-                        Some((name.take_text(), ty))
+                        Some((name.text(), ty))
                     })
                     .collect();
 
@@ -276,7 +276,7 @@ impl AstClassItemFunc {
             )?;
 
             Some(Self {
-                name: name.take_text(),
+                name: name.text(),
                 generics,
                 args,
                 ret,
@@ -311,7 +311,7 @@ impl AstFuncGenerics {
                             None
                         };
 
-                        Some((name.take_text(), ty))
+                        Some((name.text(), ty))
                     })
                     .collect();
 
@@ -478,7 +478,7 @@ impl AstImplPath {
                 // TODO: Make multiple lookahead more ergonomic.
                 delimited.lookahead(|delimited| {
                     delimited.next(reader)?;
-                    Some(util_match_ident(reader)?.take_text())
+                    Some(util_match_ident(reader)?.text())
                 })
             })
             .collect();
