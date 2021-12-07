@@ -1,6 +1,7 @@
 use crate::syntax::span::Span;
 use crate::syntax::token::{
-    GroupDelimiter, PunctChar, TokenGroup, TokenIdent, TokenPunct, TokenStreamReader,
+    GroupDelimiter, PunctChar, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
+    TokenStreamReader, TokenStringLit,
 };
 use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
@@ -9,6 +10,8 @@ use crate::util::reader::{LookaheadReader, StreamReader};
 
 pub const TURBO: &'static [PunctChar] = &[PunctChar::Colon, PunctChar::Colon]; // `::`
 pub const FUNC_ARROW: &'static [PunctChar] = &[PunctChar::Dash, PunctChar::Greater]; // `->`
+pub const ELLIPSIS: &'static [PunctChar] =
+    &[PunctChar::Period, PunctChar::Period, PunctChar::Period]; // `...`
 
 enum_meta! {
     #[derive(Debug)]
@@ -57,6 +60,7 @@ enum_meta! {
 
         /// Expression keyword
         If = "if",
+        Else = "else",
 
         /// Expression keyword
         Loop = "loop",
@@ -163,6 +167,18 @@ pub fn util_match_group<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a To
     reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenGroup>()?))
 }
 
+pub fn util_match_str_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenStringLit> {
+    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenStringLit>()?))
+}
+
+pub fn util_match_num_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenNumberLit> {
+    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenNumberLit>()?))
+}
+
+pub fn util_match_eof(reader: &mut TokenStreamReader) -> Option<()> {
+    reader.lookahead(|reader| reader.consume().is_none().then_some(()))
+}
+
 pub fn util_match_group_delimited<'a>(
     reader: &mut TokenStreamReader<'a>,
     expected_delimiter: GroupDelimiter,
@@ -226,4 +242,37 @@ pub fn util_match_turbo(reader: &mut TokenStreamReader) -> Option<Span> {
 
 pub fn util_match_func_arrow(reader: &mut TokenStreamReader) -> Option<Span> {
     util_match_punct_seq(reader, FUNC_ARROW)
+}
+
+pub fn util_match_ellipsis(reader: &mut TokenStreamReader) -> Option<Span> {
+    util_match_punct_seq(reader, ELLIPSIS)
+}
+
+// === Generic matchers === //
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TokenLitSeq<'a> {
+    Punct(&'a [PunctChar]),
+    Kw(AstKeyword),
+}
+
+impl TokenLitSeq<'_> {
+    pub fn match_list<I, V>(reader: &mut TokenStreamReader, choices: I) -> Option<V>
+    where
+        I: IntoIterator<Item = (Self, V)>,
+    {
+        for (seq, ret) in choices {
+            if seq.parse(reader).is_some() {
+                return Some(ret);
+            }
+        }
+        None
+    }
+
+    pub fn parse(self, reader: &mut TokenStreamReader) -> Option<Span> {
+        match self {
+            TokenLitSeq::Punct(seq) => util_match_punct_seq(reader, seq),
+            TokenLitSeq::Kw(kw) => util_match_specific_kw(reader, kw).cloned(),
+        }
+    }
 }

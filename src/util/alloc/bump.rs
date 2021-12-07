@@ -39,6 +39,17 @@ impl BumpAlloc {
     pub fn uid(&self) -> NonZeroUsize {
         self.rc.uid
     }
+
+    pub fn assert_finalize(self) {
+        let refs = Rc::strong_count(&self.rc) - 1;
+        if refs > 0 {
+            log::warn!(
+                "Finalization barrier could not be upheld. BumpAlloc still has {} allocator handle{}!",
+                refs,
+                if refs == 1 { "" } else { "s" }
+            );
+        }
+    }
 }
 
 impl Eq for BumpAlloc {}

@@ -1,13 +1,14 @@
+use crate::syntax::parse::func::{AstFieldType, AstFuncDef};
 use crate::syntax::parse::macros::AstAttrQualifier;
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::ty::AstType;
 use crate::syntax::parse::util::{
-    util_match_func_arrow, util_match_group_delimited, util_match_ident, util_match_kw,
-    util_match_punct, util_match_specific_kw, util_punct_matcher, AstKeyword,
+    util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
+    util_match_specific_kw, util_punct_matcher, AstKeyword,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenIdent, TokenStreamReader};
-use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, StreamReader};
+use crate::util::enum_utils::{enum_categories, VariantOf};
+use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
 
 #[derive(Debug, Clone)]
 pub struct AstClassItem {
@@ -30,11 +31,7 @@ impl AstClassItem {
 
     pub fn parse_group_inner(reader: &mut TokenStreamReader) -> Option<Vec<Self>> {
         let parts = reader.consume_while(Self::parse).collect();
-
-        if !reader.consume().is_none() {
-            return None;
-        }
-
+        util_match_eof(reader)?;
         Some(parts)
     }
 }
@@ -48,7 +45,7 @@ enum_categories! {
         Block(AstClassItemBlock),
         Remote(AstClassItemRemote),
         Type(AstClassItemType),
-        Func(AstClassItemFunc),
+        Func(AstFuncDef),
     }
 }
 
@@ -60,16 +57,8 @@ impl AstClassItemKind {
             |reader| Some(AstClassItemBlock::parse(reader)?.wrap()),
             |reader| Some(AstClassItemRemote::parse(reader)?.wrap()),
             |reader| Some(AstClassItemType::parse(reader)?.wrap()),
-            |reader| Some(AstClassItemFunc::parse(reader)?.wrap()),
+            |reader| Some(AstFuncDef::parse(reader)?.wrap()),
         )
-    }
-}
-
-enum_meta! {
-    #[derive(Debug)]
-    pub enum(AstKeyword) AstFieldType {
-        Val = AstKeyword::Val,
-        Var = AstKeyword::Var,
     }
 }
 
@@ -85,8 +74,7 @@ impl AstClassItemField {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match prefix
-            let prefix = util_match_kw(reader)
-                .and_then(|kw| AstFieldType::find_where(|_, field_kw| *field_kw == kw))?;
+            let prefix = AstFieldType::parse(reader)?;
 
             // Match field name
             let name = util_match_ident(reader)?;
@@ -201,131 +189,6 @@ impl AstClassItemType {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AstClassItemFunc {
-    pub name: String,
-    pub generics: Option<AstFuncGenerics>,
-    pub args: Vec<(String, AstType)>,
-    pub expr: Option<()>,
-    pub ret: Option<AstType>,
-}
-
-impl AstClassItemFunc {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| {
-            util_match_specific_kw(reader, AstKeyword::Fn)?;
-
-            // Match name
-            let name = util_match_ident(reader)?;
-
-            // Match optional generics
-            let generics = AstFuncGenerics::parse(reader)?;
-
-            // Match arguments
-            let args = {
-                let group = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
-                let mut reader = group.reader();
-
-                // Collect args
-                let mut delimited =
-                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-
-                let args = reader
-                    .consume_while(|reader| {
-                        delimited.next(reader)?;
-
-                        // Match name
-                        let name = util_match_ident(reader)?;
-
-                        // Match type annotation
-                        util_match_punct(reader, PunctChar::Colon, None)?;
-                        let ty = AstType::parse(reader)?;
-
-                        Some((name.text(), ty))
-                    })
-                    .collect();
-
-                // Expect EOF
-                if !reader.consume().is_none() {
-                    return None;
-                }
-
-                args
-            };
-
-            // Match optional return type
-            let ret = if util_match_func_arrow(reader).is_some() {
-                Some(AstType::parse(reader)?)
-            } else {
-                None
-            };
-
-            // Match input expression
-            let expr = match_choice!(
-                reader,
-                // Match concrete
-                |reader| {
-                    let _group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
-                    Some(Some(()))
-                },
-                // Match prototype
-                |reader| {
-                    util_match_punct(reader, PunctChar::Semicolon, None)?;
-                    Some(None)
-                }
-            )?;
-
-            Some(Self {
-                name: name.text(),
-                generics,
-                args,
-                ret,
-                expr,
-            })
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AstFuncGenerics {
-    pub params: Vec<(String, Option<AstType>)>,
-}
-
-impl AstFuncGenerics {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Option<Self>> {
-        reader.lookahead(|reader| {
-            // Match '<'
-            if util_match_punct(reader, PunctChar::Less, None).is_some() {
-                let mut delimited =
-                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
-
-                // Match parameters
-                let params = reader
-                    .consume_while(|reader| {
-                        delimited.next(reader)?;
-
-                        let name = util_match_ident(reader)?;
-                        let ty = if util_match_punct(reader, PunctChar::Colon, None).is_some() {
-                            Some(AstType::parse(reader)?)
-                        } else {
-                            None
-                        };
-
-                        Some((name.text(), ty))
-                    })
-                    .collect();
-
-                // Match '>'
-                util_match_punct(reader, PunctChar::Greater, None)?;
-
-                Some(Some(Self { params }))
-            } else {
-                Some(None)
-            }
-        })
-    }
-}
-
 // === Qualifiers === //
 
 enum_categories! {
@@ -407,9 +270,7 @@ impl AstClassQualifierOut {
                 });
 
                 // Match EOF
-                if reader.consume().is_some() {
-                    return None;
-                }
+                util_match_eof(&mut reader)?;
             }
 
             // Construct qualifier
@@ -451,11 +312,9 @@ impl AstClassQualifierImpl {
 
             let group = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
 
-            let mut inner_reader = group.reader();
-            let path = AstImplPath::parse(&mut inner_reader);
-            if !inner_reader.consume().is_none() {
-                return None;
-            }
+            let mut reader = group.reader();
+            let path = AstImplPath::parse(&mut reader);
+            util_match_eof(&mut reader)?;
 
             Some(Self { path })
         })

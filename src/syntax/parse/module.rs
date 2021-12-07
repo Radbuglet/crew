@@ -2,12 +2,12 @@ use crate::syntax::parse::class::AstClassItem;
 use crate::syntax::parse::macros::{AstAnyAttrMacro, AstAttrQualifier};
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::util::{
-    util_match_group_delimited, util_match_ident, util_match_punct, util_match_specific_kw,
-    AstKeyword,
+    util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
+    util_match_specific_kw, AstKeyword,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
 use crate::util::enum_utils::{enum_categories, VariantOf};
-use crate::util::reader::{match_choice, LookaheadReader, StreamReader};
+use crate::util::reader::{match_choice, LookaheadReader};
 
 #[derive(Debug, Clone)]
 pub struct AstModule {
@@ -29,22 +29,10 @@ impl AstModule {
     pub fn parse_parts(reader: &mut TokenStreamReader) -> Option<Vec<AstModItem>> {
         reader.lookahead(|reader| {
             // Collect parts
-            let parts = reader
-                .consume_while(|reader| {
-                    // Collect qualifiers
-                    let qualifiers = reader.consume_while(AstModQualifier::parse).collect();
-
-                    // Collect item
-                    let kind = AstModItemKind::parse(reader)?;
-
-                    Some(AstModItem { qualifiers, kind })
-                })
-                .collect();
+            let parts = reader.consume_while(AstModItem::parse).collect();
 
             // Expect EOF
-            if !reader.consume().is_none() {
-                return None;
-            }
+            util_match_eof(reader)?;
 
             Some(parts)
         })
@@ -57,6 +45,18 @@ pub struct AstModItem {
     pub kind: AstModItemKind,
 }
 
+impl AstModItem {
+    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+        // Collect qualifiers
+        let qualifiers = reader.consume_while(AstModQualifier::parse).collect();
+
+        // Collect item
+        let kind = AstModItemKind::parse(reader)?;
+
+        Some(AstModItem { qualifiers, kind })
+    }
+}
+
 // === Item kinds === //
 
 enum_categories! {
@@ -66,6 +66,7 @@ enum_categories! {
         Block(AstModBlock),
         Use(AstModUse),
         Class(AstModClass),
+        // TODO: Functions and stuff
     }
 }
 

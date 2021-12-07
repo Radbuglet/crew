@@ -1,10 +1,11 @@
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{
-    util_match_group_delimited, util_match_ident, util_match_punct, util_punct_matcher,
+    util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
+    util_punct_matcher,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
 use crate::util::enum_utils::{enum_categories, VariantOf};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, StreamReader};
+use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
 
 enum_categories! {
     #[derive(Debug, Clone)]
@@ -112,30 +113,19 @@ impl AstTypeTuple {
     pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
         reader.lookahead(|reader| {
             let paren = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
-            let mut inner_reader = paren.reader();
-            let mut types = Vec::new();
+            let mut reader = paren.reader();
             let mut delimited = DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
 
             // Match list
-            inner_reader.consume_while(|inner_reader| {
-                // Match delimiter
-                if delimited.next(inner_reader).is_none() {
-                    return false;
-                }
-
-                // Match type
-                if let Some(ty) = AstType::parse(inner_reader) {
-                    types.push(ty);
-                    true
-                } else {
-                    false
-                }
-            });
+            let types = reader
+                .consume_while(|reader| {
+                    delimited.next(reader)?;
+                    AstType::parse(reader)
+                })
+                .collect();
 
             // Match EOF
-            if !inner_reader.consume().is_none() {
-                return None;
-            }
+            util_match_eof(&mut reader)?;
 
             Some(Self { types })
         })

@@ -9,6 +9,7 @@
 #![feature(str_internals)]
 #![feature(unsize)]
 #![feature(int_log)]
+#![feature(bool_to_option)]
 
 use crate::syntax::parse::module::AstModule;
 use crate::syntax::span::{ReadAtom, SourceFile};

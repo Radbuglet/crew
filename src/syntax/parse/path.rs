@@ -1,9 +1,10 @@
 use crate::syntax::parse::util::{
-    util_match_group_delimited, util_match_ident, util_match_ident_or_kw, util_match_punct,
-    util_match_specific_kw, util_match_turbo, util_punct_matcher, AstKeyword, IdentOrKw,
+    util_match_eof, util_match_group_delimited, util_match_ident, util_match_ident_or_kw,
+    util_match_punct, util_match_specific_kw, util_match_turbo, util_punct_matcher, AstKeyword,
+    IdentOrKw,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, RepFlow, StreamReader};
+use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, RepFlow};
 
 // === Shared === //
 
@@ -144,7 +145,7 @@ impl AstPathTree {
                     DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
 
                 // Collect paths
-                // FIXME: Make this generic and add support for optional trailing commas
+                // TODO: Make this generic and add support for optional trailing commas
                 let paths = paren
                     .reader()
                     .consume_while(|reader| {
@@ -154,9 +155,7 @@ impl AstPathTree {
                     .collect();
 
                 // Match inner group EOF
-                if reader.consume().is_some() {
-                    return None;
-                }
+                util_match_eof(reader)?;
 
                 Some(paths)
             } else {
@@ -252,9 +251,7 @@ impl AstPathTerminator {
                 }
 
                 // Match inner group EOF
-                if reader.consume().is_some() {
-                    return None;
-                }
+                util_match_eof(&mut reader)?;
 
                 Some(Self::Tree(nodes))
             } else {
