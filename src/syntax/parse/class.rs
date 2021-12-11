@@ -1,4 +1,4 @@
-use crate::syntax::parse::func::{AstFieldType, AstFuncDef};
+use crate::syntax::parse::class_expr::{AstFieldType, AstFuncDef};
 use crate::syntax::parse::macros::AstAttrQualifier;
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::ty::AstType;

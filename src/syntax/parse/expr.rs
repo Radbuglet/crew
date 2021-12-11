@@ -1,4 +1,4 @@
-use crate::syntax::parse::func::{AstFieldType, AstFuncDef};
+use crate::syntax::parse::class_expr::{AstFieldType, AstFuncDef};
 use crate::syntax::parse::module::AstModItem;
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::ty::AstType;

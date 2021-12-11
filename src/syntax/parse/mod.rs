@@ -1,6 +1,6 @@
 pub mod class;
+pub mod class_expr;
 pub mod expr;
-pub mod func;
 pub mod macros;
 pub mod module;
 pub mod path;

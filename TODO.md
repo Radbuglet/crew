@@ -19,6 +19,9 @@
 ### Nitpicks
 
 - [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something
+- [ ] A lot of parser code can be modernized with new idioms.
+- [ ] The bump allocator could be reference-counted per page to allow for more precise memory deallocation, especially during visitor remaps.
+- [ ] We can unify `try_collect` and `collect_into` with the notion of an `ArrayVec`.
 - [ ] `TokenStreams` should also have a slice type
 - [ ] `Folders` should support the closure-return system
 - [ ] The `Folder` API should support relative and absolute positions.
@@ -30,11 +33,12 @@
 - [x] Implement token/span printing
 - [ ] Improve string literal handling:
   - [x] Multiline strings 
-  - [ ] Unicode escapes
+  - [x] Unicode escapes
   - [ ] Single characters
   - [ ] Multiline indent bars
-  - [ ] Custom delimiters
-- [ ] Finish numeric literal parsing (how do we handle property accesses and ranges)
+  - [ ] Custom string delimiters
+- [ ] Raw identifiers
+- [x] Finish numeric literal parsing (how do we handle property accesses and ranges)
 - [ ] Preserve doc and delimiter comments
 - [ ] Reconsider character groups (we might need to look into preventing certain Unicode exploits)
 - [ ] Implement error recovery system
@@ -45,7 +49,6 @@
 - [ ] Implement simple "production rules" style grammar.
 - [ ] Implement diagnostic.
 - [ ] Implement error recovery.
-- [ ] Optimize matching system
 - [ ] Track source spans for diagnostics later on.
 - [ ] Test suite
 

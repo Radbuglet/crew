@@ -28,8 +28,9 @@
 //! given the specific context of the main [tokenize_file] routine.
 
 use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
+use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
-use crate::util::reader::{LookaheadReader, StreamReader};
+use crate::util::reader::{match_choice, LookaheadReader, RepFlow, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -270,6 +271,7 @@ pub struct TokenNumberLit {
     pub prefix: NumberPrefix,
     pub int_part: String,
     pub float_part: Option<String>,
+    pub exp_part: Option<(bool, String)>,
 }
 
 impl AnyToken for TokenNumberLit {
@@ -279,6 +281,8 @@ impl AnyToken for TokenNumberLit {
 }
 
 pub const DIGITS_DECIMAL: &'static str = "0123456789";
+
+// N.B. Digit char-list is case insensitive.
 pub const DIGITS_HEXADECIMAL: &'static str = "0123456789abcdef";
 
 enum_meta! {
@@ -852,6 +856,28 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
     })
 }
 
+pub fn tokenize_read_digits<'a, 'b>(
+    reader: &'a mut FileReader<'b>,
+    digits: &'b str,
+) -> impl Iterator<Item = char> + Captures<'b> + 'a {
+    fn alphabet_contains(alphabet: &str, char: char) -> bool {
+        let char = char.to_ascii_lowercase();
+        alphabet.chars().any(|allowed| allowed == char)
+    }
+
+    std::iter::from_fn(move || {
+        reader
+            .consume_while(|reader| match reader.consume() {
+                ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
+                    RepFlow::Finish(char.to_ascii_lowercase())
+                }
+                ReadAtom::Codepoint('_') => RepFlow::Continue('_'),
+                _ => RepFlow::Reject,
+            })
+            .last()
+    })
+}
+
 /// Matches and consumes a single [TokenNumberLit]. Does not match a plain EOF.
 ///
 /// ## Syntax
@@ -860,35 +886,17 @@ pub fn group_match_string_start(reader: &mut FileReader) -> Option<TokenStringLi
 /// [prefix?: "0" + (x|o|b)]
 /// [int_part: PREFIX_DIGITS]
 /// [decimal (only when FP)?:
-///     "." + DEC_DIGIT*
+///     ("." + DEC_DIGIT*)?
 ///     [exponent?: "E" + (+|-) + DEC_DIGIT*]
 /// ]
 /// ```
 ///
-/// **Note:** we explicitly do not parse the leading sign because we handle negative numbers during
-/// constant arithmetic resolution.
+/// **Note:** we explicitly do not parse the leading sign because it will be parsed as a unary
+/// operator on the numeric literal.
 ///
 /// See [NumberPrefix] for more information about prefixes.
 ///
 pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit> {
-    fn read_digits(reader: &mut FileReader, digits: &str) -> String {
-        fn alphabet_contains(alphabet: &str, char: char) -> bool {
-            let char = char.to_ascii_lowercase();
-            alphabet.chars().any(|allowed| allowed == char)
-        }
-
-        let mut text = String::new();
-        reader.consume_while(|reader| match reader.consume() {
-            ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
-                text.push(char.to_ascii_lowercase());
-                true
-            }
-            ReadAtom::Codepoint('_') => true,
-            _ => false,
-        });
-        text
-    }
-
     reader.lookahead(|reader| {
         let start = reader.next_loc();
 
@@ -908,7 +916,7 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
 
         // Read integer-part digits
         let int_part = {
-            let text = read_digits(reader, prefix.meta().digits);
+            let text = tokenize_read_digits(&mut *reader, prefix.meta().digits).collect::<String>();
             if text.is_empty() {
                 if prefix == NumberPrefix::Decimal {
                     return None;
@@ -924,6 +932,19 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
             // Match period
             let has_fp = match_str(reader, ".");
 
+            // Match second period to disambiguate between trailing floating-points and range
+            // expressions.
+            if match_str(reader, ".") {
+                return Some(TokenNumberLit {
+                    prefix,
+                    span: Span::new(&start, &reader.prev_loc()),
+                    int_part,
+                    float_part: None,
+                    exp_part: None,
+                });
+            }
+
+            // Otherwise, attempt to match the decimal part.
             if has_fp {
                 if prefix != NumberPrefix::Decimal {
                     panic!(
@@ -932,10 +953,32 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
                     );
                 }
 
-                Some(read_digits(reader, &NumberPrefix::Decimal.meta().digits))
+                Some(tokenize_read_digits(reader, &DIGITS_DECIMAL).collect())
             } else {
                 None
             }
+        };
+
+        // Read exponents
+        let exp_part = if match_str(reader, "E") {
+            // Match sign (optional)
+            let is_positive = match_choice!(
+                &mut *reader,
+                |reader| match_str(reader, "+").then_some(true),
+                |reader| match_str(reader, "-").then_some(false),
+            )
+            .unwrap_or(true);
+
+            // Match digits
+            let digits = tokenize_read_digits(reader, &DIGITS_DECIMAL).collect::<String>();
+
+            if digits.is_empty() {
+                panic!("Exponent must be followed with one or more digits.");
+            }
+
+            Some((is_positive, digits))
+        } else {
+            None
         };
 
         Some(TokenNumberLit {
@@ -943,6 +986,7 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
             span: Span::new(&start, &reader.prev_loc()),
             int_part,
             float_part,
+            exp_part,
         })
     })
 }
@@ -978,26 +1022,68 @@ pub fn string_match_multiline_escape(reader: &mut FileReader) -> bool {
 pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
     reader.lookahead(|reader| {
         if match_str(reader, "\\") {
-            match reader.consume() {
-                // ASCII characters
-                ReadAtom::Codepoint('r') => Some('\r'),
-                ReadAtom::Codepoint('n') => Some('\n'),
-                ReadAtom::Codepoint('t') => Some('\t'),
-                ReadAtom::Codepoint('0') => Some('\0'),
+            let escape = match reader.consume() {
+                // ASCII escapes
+                ReadAtom::Codepoint('r') => '\r',
+                ReadAtom::Codepoint('n') => '\n',
+                ReadAtom::Codepoint('t') => '\t',
+                ReadAtom::Codepoint('0') => '\0',
 
                 // Delimiter escapes
-                ReadAtom::Codepoint('\\') => Some('\\'),
-                ReadAtom::Codepoint('"') => Some('"'),
-                ReadAtom::Codepoint('\'') => Some('\''),
-                ReadAtom::Codepoint('{') => Some('{'),
+                ReadAtom::Codepoint('\\') => '\\',
+                ReadAtom::Codepoint('"') => '"',
+                ReadAtom::Codepoint('\'') => '\'',
+                ReadAtom::Codepoint('{') => '{',
 
-                // Unicode
-                ReadAtom::Codepoint('u') => todo!("Unicode escapes not supported yet!"),
+                // Codepoints
+                ReadAtom::Codepoint('x') => {
+                    let hex = tokenize_read_digits(reader, DIGITS_HEXADECIMAL)
+                        .take(2)
+                        .collect::<String>();
+
+                    if hex.len() != 2 {
+                        panic!("{}: ASCII character escapes expect exactly two hexadecimal digits.", reader.prev_loc().pos());
+                    }
+
+                    let char = char::from_u32(u8::from_str_radix(&hex, 16).unwrap() as u32);
+
+                    match char {
+                        Some(char) if char.is_ascii() => char,
+                        _ => panic!(
+                            "{}: ASCII character escape {} must be less than 0x7F (the highest ASCII character)",
+                            reader.prev_loc().pos(),
+                            hex,
+                        ),
+                    }
+                }
+                ReadAtom::Codepoint('u') => {
+                    if !match_str(reader, "{") {
+                        panic!("{}: Expected `{{` after start of Unicode escape (`\\u`)", reader.prev_loc().pos());
+                    }
+
+                    let hex = tokenize_read_digits(reader, DIGITS_HEXADECIMAL).take(6).collect::<String>();
+
+                    if !match_str(reader, "}") {
+                        panic!("{}: Expected `}}` at the end of Unicode escape.", reader.prev_loc().pos());
+                    }
+
+                    let char = char::from_u32(u32::from_str_radix(&hex, 16).unwrap());
+
+                    match char {
+                        Some(char) => char,
+                        _ => panic!(
+                            "{}: Unicode character escape \\u{{{}}} forms an invalid codepoint.",
+                            reader.prev_loc().pos(),
+                            hex,
+                        ),
+                    }
+                },
                 _ => panic!(
                     "Invalid character escape sequence at {}!",
                     reader.prev_loc().pos()
                 ),
-            }
+            };
+            Some(escape)
         } else {
             None
         }

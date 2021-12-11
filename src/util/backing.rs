@@ -22,3 +22,7 @@ impl<T: Clone> Take<T> for &'_ T {
         self.clone()
     }
 }
+
+pub trait Captures<'a> {}
+
+impl<'a, T: ?Sized> Captures<'a> for T {}

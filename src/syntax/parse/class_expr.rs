@@ -1,3 +1,5 @@
+//! Grammatical elements shared between class parsing and expression parsing.
+
 use crate::syntax::parse::expr::AstScope;
 use crate::syntax::parse::ty::AstType;
 use crate::syntax::parse::util::{

@@ -51,6 +51,18 @@ pub trait ArrayCollectExt: Sized + Iterator {
             ),
         }
     }
+
+    fn collect_into(mut self, target: &mut [<Self as Iterator>::Item]) -> (usize, Self) {
+        let mut filled = 0;
+        while let Some(elem) = self.next() {
+            if filled >= target.len() {
+                return (filled, self);
+            }
+            target[filled] = elem;
+            filled += 1;
+        }
+        (filled, self)
+    }
 }
 
 impl<I: Iterator> ArrayCollectExt for I {
