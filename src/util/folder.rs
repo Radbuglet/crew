@@ -1,5 +1,3 @@
-// TODO: Code review
-
 use crate::util::iter_ext::{ArrayCollectExt, TakeAtExt};
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::mem::{transmute, MaybeUninit};
@@ -114,13 +112,13 @@ pub trait Folder {
 
     fn new_len(&self) -> usize;
 
-    fn commit_many(&mut self, count: usize);
+    fn commit_many<P: FolderPos>(&mut self, pos: P);
 
     fn commit(&mut self) {
         self.commit_many(1);
     }
 
-    fn omit_many(&mut self, count: usize);
+    fn omit_many<P: FolderPos>(&mut self, count: P);
 
     fn omit(&mut self) {
         self.omit_many(1);
@@ -136,8 +134,8 @@ pub trait Folder {
         FolderOmitIter::new(self)
     }
 
-    fn take_many(&mut self, count: usize) -> FolderOmitDrain<'_, Self> {
-        FolderOmitDrain::new(self, count)
+    fn take_many<P: FolderPos>(&mut self, pos: P) -> FolderOmitDrain<'_, Self> {
+        FolderOmitDrain::new(self, pos.as_rel(self))
     }
 
     fn take_at<T: FolderPos, const N: usize>(&mut self, locs: [T; N]) -> [Self::Item; N] {
@@ -445,7 +443,8 @@ impl<T> Folder for RightFolder<'_, T> {
         self.write_index
     }
 
-    fn commit_many(&mut self, count: usize) {
+    fn commit_many<P: FolderPos>(&mut self, pos: P) {
+        let count = pos.as_rel(self);
         assert!(self.read_index + count <= self.target.len());
 
         for _ in 0..count {
@@ -458,7 +457,8 @@ impl<T> Folder for RightFolder<'_, T> {
         }
     }
 
-    fn omit_many(&mut self, count: usize) {
+    fn omit_many<P: FolderPos>(&mut self, pos: P) {
+        let count = pos.as_rel(self);
         assert!(self.read_index + count <= self.target.len());
 
         // N.B. we increment the `read_index` before our calls to drop because users could panic and

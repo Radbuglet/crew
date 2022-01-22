@@ -1,5 +1,7 @@
 use std::mem::MaybeUninit;
 
+// === TakeAt === //
+
 pub trait TakeAtExt: Sized + Iterator {
     fn take_at<I: Iterator<Item = usize>>(self, indices: I) -> TakeAtIter<Self, I> {
         TakeAtIter {
@@ -38,8 +40,21 @@ impl<ISrc: Iterator, IIdx: Iterator<Item = usize>> Iterator for TakeAtIter<ISrc,
     }
 }
 
+// === ArrayCollect === //
+
 pub trait ArrayCollectExt: Sized + Iterator {
-    fn try_collect_array<const N: usize>(self) -> Option<[<Self as Iterator>::Item; N]>;
+    fn try_collect_array<const N: usize>(mut self) -> Option<[<Self as Iterator>::Item; N]> {
+        let mut arr = MaybeUninit::<Self::Item>::uninit_array::<N>();
+
+        for slot in arr.iter_mut() {
+            slot.write(match self.next() {
+                Some(next) => next,
+                None => return None,
+            });
+        }
+
+        Some(unsafe { MaybeUninit::array_assume_init(arr) })
+    }
 
     fn collect_array<const N: usize>(self) -> [<Self as Iterator>::Item; N] {
         match self.try_collect_array() {
@@ -65,29 +80,18 @@ pub trait ArrayCollectExt: Sized + Iterator {
     }
 }
 
-impl<I: Iterator> ArrayCollectExt for I {
-    fn try_collect_array<const N: usize>(mut self) -> Option<[I::Item; N]> {
-        let mut arr = MaybeUninit::<I::Item>::uninit_array::<N>();
+impl<I: Iterator> ArrayCollectExt for I {}
 
-        for slot in arr.iter_mut() {
-            slot.write(match self.next() {
-                Some(next) => next,
-                None => return None,
-            });
-        }
+// === TryCollect === //
 
-        Some(unsafe { MaybeUninit::array_assume_init(arr) })
-    }
-}
-
-pub trait ResultLike {
+pub trait CollectableResult {
     type Value;
     type Error;
 
     fn to_result(self) -> Result<Self::Value, Self::Error>;
 }
 
-impl<T> ResultLike for Option<T> {
+impl<T> CollectableResult for Option<T> {
     type Value = T;
     type Error = ();
 
@@ -99,7 +103,7 @@ impl<T> ResultLike for Option<T> {
     }
 }
 
-impl<T, E> ResultLike for Result<T, E> {
+impl<T, E> CollectableResult for Result<T, E> {
     type Value = T;
     type Error = E;
 
@@ -115,28 +119,39 @@ pub trait TryCollectExt: Sized + Iterator {
     fn try_collect<C: FromIterator<Self::Value>>(self) -> Result<C, Self::Error>;
 }
 
-impl<E: ResultLike, I: Iterator<Item = E>> TryCollectExt for I {
+impl<E: CollectableResult, I: Iterator<Item = E>> TryCollectExt for I {
     type Value = E::Value;
     type Error = E::Error;
 
-    fn try_collect<C: FromIterator<Self::Value>>(self) -> Result<C, Self::Error> {
-        let mut mapped = self.map(ResultLike::to_result);
-        let iter = (&mut mapped)
-            .take_while(Result::is_ok)
-            // Default unwrap methods format the error on panic.
-            .map(|res| match res {
-                Ok(res) => res,
-                Err(_) => unreachable!(),
-            });
+    fn try_collect<C: FromIterator<Self::Value>>(mut self) -> Result<C, Self::Error> {
+        // Collect all "Ok" elements.
+        let mut iter_error = None;
+        let ok_iter = std::iter::from_fn(|| {
+            // Ensure that users don't consume more than one error.
+            if iter_error.is_some() {
+                return None;
+            }
 
-        let collection = iter.collect::<C>();
-        match mapped.next() {
-            Some(Ok(_)) => unreachable!(),
-            Some(Err(err)) => Err(err),
+            // Transform errors into "None" and flag them.
+            match self.next()?.to_result() {
+                Ok(elem) => Some(elem),
+                Err(error) => {
+                    iter_error = Some(error);
+                    None
+                }
+            }
+        });
+        let collection = ok_iter.collect::<C>();
+
+        // Check if there are any trailing non-ok elements.
+        match iter_error {
+            Some(err) => Err(err),
             None => Ok(collection),
         }
     }
 }
+
+// === "Tests" === //
 
 #[test]
 fn swap_example() {

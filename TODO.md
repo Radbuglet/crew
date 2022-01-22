@@ -1,22 +1,6 @@
 # To-Do
 
-## Infrastructure
-
-- [x] Trace logging
-- [x] Efficient data structures:
-  - [x] Bump allocator
-  - [x] Fork `std` collections
-  - [x] Interner
-- [x] Macro to automate object category generation
-- [ ] Create in-place array folding mechanisms:
-  - [x] Base interface
-  - [x] Advanced folding mechanisms
-  - [ ] Left folder
-- [ ] Diagnostic system
-- [ ] Crash reporter
-- [ ] Task system
-
-### Nitpicks
+## Nitpicks
 
 - [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something
 - [ ] A lot of parser code can be modernized with new idioms.
@@ -24,8 +8,9 @@
 - [ ] We can unify `try_collect` and `collect_into` with the notion of an `ArrayVec`.
 - [ ] `TokenStreams` should also have a slice type
 - [ ] `Folders` should support the closure-return system
-- [ ] The `Folder` API should support relative and absolute positions.
-- [ ] Diagnostics should be allowed to use the tokenized source and the AST to produce properly highlighted code samples
+- [x] The `Folder` API should support relative and absolute positions.
+- [ ] Multi-lookahead can be made more ergonomic
+- [ ] We should implement a task system with async multithreaded execution
 
 ## Tokenizer
 
@@ -89,3 +74,4 @@
 - [ ] Struct types (essentially tuples with named fields).
 - [ ] Full relational type syntax. (e.g. `:>`, `:<`, `=`, and `:` as an alias for `:<`)
 - [ ] Function expression syntax.
+- [ ] Differentiate between open types and closed types and allow for "component" open types. These should also be per-method-block.This solves issues with references (by default, methods are called with an anonymous borrow which cannot be shared beyond the call stack) and with implementation rights (i.e. deciding who can implement an interface for a given target). See examples below:

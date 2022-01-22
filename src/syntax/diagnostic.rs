@@ -1,8 +1,53 @@
-use crate::syntax::span::{FileReader, Span};
+use crate::syntax::span::{FileReader, ReadAtom, Span};
 use crate::util::enum_utils::{enum_meta, EnumMeta};
-use crate::{ReadAtom, StreamReader};
+use crate::util::fmt::{FmtPaddedNumber, FmtRepeat};
+use crate::util::reader::{LookaheadReader, StreamReader};
 use colored::{Color, Colorize};
-use std::fmt::{Display, Formatter};
+use std::fmt::Display;
+
+#[derive(Debug, Default, Clone)]
+pub struct Diagnostics {
+    messages: Vec<Message>,
+}
+
+impl Diagnostics {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn fatal<F: Display>(&mut self, span: Span, text: F) -> Result<!, ()> {
+        self.display_error(span, text);
+        Err(())
+    }
+
+    pub fn display_error<F: Display>(&mut self, span: Span, text: F) {
+        self.raw_push(Message {
+            kind: MessageType::Error,
+            span,
+            text: text.to_string(),
+        });
+    }
+
+    pub fn display_warn<F: Display>(&mut self, span: Span, text: F) {
+        self.raw_push(Message {
+            kind: MessageType::Warning,
+            span,
+            text: text.to_string(),
+        });
+    }
+
+    pub fn raw_push(&mut self, message: Message) {
+        self.messages.push(message);
+    }
+
+    pub fn temp_display(&self) {
+        for message in &self.messages {
+            message.temp_display();
+        }
+    }
+}
+
+impl LookaheadReader for Diagnostics {}
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -34,14 +79,6 @@ pub struct MessageTypeMeta {
 // === Diagnostic printing === //
 
 impl Message {
-    // FIXME: This code is complete garbage.
-    // ^ 1. Diagnostics should be printed through user-selected printing strategies, not a default
-    //      `display` method.
-    //   2. We should support several spans in one code sample.
-    //   3. We should minimize allocations and reduce the number of color changes.
-    //   4. We should auto-wrap lines based off the terminal's width to make the span of long lines
-    //      intelligible.
-    //   5. What the heck is this control flow?!
     pub fn temp_display(&self) {
         // Display principal message
         let kind_meta = self.kind.meta();
@@ -76,7 +113,7 @@ impl Message {
 
         println!(
             "{}{} {}",
-            Repeat {
+            FmtRepeat {
                 text: ' ',
                 count: left_padding - 1,
             },
@@ -90,7 +127,7 @@ impl Message {
                 let loc = reader.next_loc();
                 print!(
                     "{}{}",
-                    PaddedNumber {
+                    FmtPaddedNumber {
                         number: loc.displayed_line(),
                         space: left_padding
                     }
@@ -101,7 +138,7 @@ impl Message {
             } else {
                 print!(
                     "{}{}",
-                    Repeat {
+                    FmtRepeat {
                         text: ' ',
                         count: left_padding,
                     }
@@ -254,38 +291,5 @@ impl Message {
         }
 
         println!();
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Repeat<T> {
-    pub count: u32,
-    pub text: T,
-}
-
-impl<T: Display> Display for Repeat<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for _ in 0..self.count {
-            self.text.fmt(f)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PaddedNumber {
-    pub number: usize,
-    pub space: u32,
-}
-
-impl Display for PaddedNumber {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.number)?;
-        Repeat {
-            count: self.space - (self.number.log10() + 1),
-            text: " ",
-        }
-        .fmt(f)?;
-        Ok(())
     }
 }

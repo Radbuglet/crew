@@ -2,12 +2,8 @@ use bumpalo::Bump;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::num::NonZeroUsize;
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static UID: AtomicUsize = AtomicUsize::new(0);
 
 // N.B. `BumpAlloc` does not implement `Default` because constructors might build a new default
 // allocator if the arena is not passed explicitly, leading to accidental performance problems.
@@ -18,7 +14,6 @@ pub struct BumpAlloc {
 
 struct AllocInner {
     bump: Bump,
-    uid: NonZeroUsize,
 }
 
 impl BumpAlloc {
@@ -28,16 +23,8 @@ impl BumpAlloc {
 
     pub fn new_with(bump: Bump) -> Self {
         Self {
-            rc: Rc::new(AllocInner {
-                bump,
-                uid: NonZeroUsize::new(UID.fetch_add(1, Ordering::Relaxed))
-                    .expect("BumpAlloc UID overflowed!"),
-            }),
+            rc: Rc::new(AllocInner { bump }),
         }
-    }
-
-    pub fn uid(&self) -> NonZeroUsize {
-        self.rc.uid
     }
 
     pub fn assert_finalize(self) {
@@ -56,20 +43,20 @@ impl Eq for BumpAlloc {}
 
 impl PartialEq for BumpAlloc {
     fn eq(&self, other: &Self) -> bool {
-        self.rc.uid == other.rc.uid
+        Rc::ptr_eq(&self.rc, &other.rc)
     }
 }
 
 impl Hash for BumpAlloc {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_usize(self.rc.uid.get());
+        state.write_usize(Rc::as_ptr(&self.rc) as usize);
     }
 }
 
 impl Debug for BumpAlloc {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BumpAlloc")
-            .field("uid", &self.uid().get())
+            .field("rc", &Rc::as_ptr(&self.rc))
             .finish()
     }
 }

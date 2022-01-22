@@ -27,10 +27,11 @@
 //! attempt to consume "logical lexemes" but enable the user to select which lexemes can be matched
 //! given the specific context of the main [tokenize_file] routine.
 
+use crate::syntax::diagnostic::Diagnostics;
 use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
-use crate::util::reader::{match_choice, LookaheadReader, RepFlow, StreamReader};
+use crate::util::reader::{match_choice, BarePResult, LookaheadReader, RepFlow, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -282,7 +283,7 @@ impl AnyToken for TokenNumberLit {
 
 pub const DIGITS_DECIMAL: &'static str = "0123456789";
 
-// N.B. Digit char-list is case insensitive.
+// Digit char-list is case insensitive.
 pub const DIGITS_HEXADECIMAL: &'static str = "0123456789abcdef";
 
 enum_meta! {
@@ -290,21 +291,25 @@ enum_meta! {
     pub enum(GroupDelimiterMeta) GroupDelimiter {
         File = GroupDelimiterMeta {
             name: "file",
+            closing_name: "<EOF>",
             left: None,
             right: CharOrEof::Eof,
         },
         Paren = GroupDelimiterMeta {
             name: "parenthesis",
+            closing_name: ")",
             left: Some(CharOrEof::Char('(')),
             right: CharOrEof::Char(')'),
         },
         Brace = GroupDelimiterMeta {
             name: "brace",
+            closing_name: "}",
             left: Some(CharOrEof::Char('{')),
             right: CharOrEof::Char('}'),
         },
         Bracket = GroupDelimiterMeta {
             name: "square bracket",
+            closing_name: "]",
             left: Some(CharOrEof::Char('[')),
             right: CharOrEof::Char(']'),
         },
@@ -366,6 +371,7 @@ enum_meta! {
 #[derive(Debug, Copy, Clone)]
 pub struct GroupDelimiterMeta {
     name: &'static str,
+    closing_name: &'static str,
     left: Option<CharOrEof>,
     right: CharOrEof,
 }
@@ -482,7 +488,7 @@ enum_categories! {
 }
 // === Tokenizing === //
 
-pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
+pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<TokenGroup, ()> {
     // Consume any shebang at the beginning of the file.
     match_shebang(reader);
 
@@ -494,45 +500,58 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
 
     loop {
         match stack.last_mut().unwrap() {
+            // Handle group parsing
             StackFrame::Group(group) => {
                 // Match group delimiters
                 match group_match_delimiter(reader) {
                     // Group open
                     Some((delimiter, DelimiterMode::Open)) => {
                         stack.push(StackFrame::Group(TokenGroup::new(
-                            reader.next_loc().char_span(),
+                            reader.prev_loc().char_span(),
                             delimiter,
                         )));
                         continue;
                     }
                     // Group close
                     Some((delimiter, DelimiterMode::Close)) => {
-                        assert_eq!(
-                            delimiter,
-                            group.delimiter,
-                            "Delimiter balance error between brace at {} and brace at {}",
-                            group.full_span().start().pos(),
-                            reader.prev_loc().pos(),
-                        );
+                        // Validate delimiter
+                        if group.delimiter != delimiter {
+                            // TODO: Recover gracefully
+                            diag.fatal(
+                                Span::new(group.full_span().start(), reader.prev_loc()),
+                                format!(
+                                    "Unexpected \"{}\". Expected \"{}\"",
+                                    delimiter.meta().closing_name,
+                                    group.delimiter.meta().closing_name,
+                                ),
+                            )?;
+                        }
 
+                        // Get child (current) group
                         let child = match stack.pop() {
                             Some(StackFrame::Group(group)) => group,
                             _ => unreachable!(),
                         };
 
+                        // Push to parent group
                         match stack.last_mut() {
+                            // We're inside another group!
                             Some(StackFrame::Group(parent)) => {
                                 parent.tokens_mut().push(child.wrap())
                             }
+                            // We're inside a templated string!
                             Some(StackFrame::String(str)) => {
                                 str.parts.push(StringComponent::Template(child))
                             }
+                            // ...what?
                             Some(StackFrame::BlockComment) => unreachable!(),
-                            None => return child,
+                            // We're at the root of the file so we've finished parsing.
+                            None => return Ok(child),
                         }
 
                         continue;
                     }
+                    // Nothing, fallthrough.
                     None => {}
                 }
 
@@ -583,18 +602,23 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
                 }
 
                 // Match number literal
-                if let Some(num) = group_match_number_lit(reader) {
+                if let Some(num) = group_match_number_lit(reader, diag)? {
+                    let num_end = reader.prev_loc();
+
                     if reader.peek_ahead(group_match_ident).is_some() {
-                        panic!("Unexpected digit at {}", reader.next_loc().pos());
+                        diag.display_error(
+                            Span::new(num_end, reader.prev_loc()),
+                            "Identifier cannot be placed directly after a number literal.",
+                        );
                     }
 
                     group.tokens_mut().push(Token::NumberLit(num));
                     continue;
                 }
 
-                panic!(
-                    "Unexpected character in group at {}!",
-                    reader.next_loc().pos()
+                diag.display_error(
+                    reader.prev_loc().char_span(),
+                    "Unexpected character in group.",
                 );
             }
             StackFrame::String(string) => {
@@ -602,10 +626,10 @@ pub fn tokenize_file(reader: &mut FileReader) -> TokenGroup {
                 loop {
                     // Match EOF
                     if reader.peek() == ReadAtom::Eof {
-                        panic!(
-                            "Unexpected EOF while parsing string starting at {}",
-                            string.full_span().start().pos()
-                        );
+                        diag.fatal(
+                            Span::new(string.span.start(), reader.next_loc()),
+                            "Unexpected \"<EOF>\" while parsing string literal.",
+                        )?;
                     }
 
                     // Match multiline escape
@@ -896,7 +920,10 @@ pub fn tokenize_read_digits<'a, 'b>(
 ///
 /// See [NumberPrefix] for more information about prefixes.
 ///
-pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit> {
+pub fn group_match_number_lit(
+    reader: &mut FileReader,
+    diag: &mut Diagnostics,
+) -> BarePResult<TokenNumberLit> {
     reader.lookahead(|reader| {
         let start = reader.next_loc();
 
@@ -917,40 +944,55 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
         // Read integer-part digits
         let int_part = {
             let text = tokenize_read_digits(&mut *reader, prefix.meta().digits).collect::<String>();
+
             if text.is_empty() {
-                if prefix == NumberPrefix::Decimal {
-                    return None;
+                return if prefix == NumberPrefix::Decimal {
+                    Ok(None)
                 } else {
-                    panic!("Expected digits after prefix at {}!", start.pos());
-                }
+                    diag.fatal(
+                        reader.prev_loc().char_span(),
+                        format!(
+                            "Expected digits after explicit prefix (one of \"{}\")!",
+                            prefix.meta().digits
+                        ),
+                    )?;
+                };
             }
             text
         };
 
         // Read floating-part digits
         let float_part = {
-            // Match period
-            let has_fp = match_str(reader, ".");
+            // Detect decimal point but ignore adjoined range expressions ("..")
+            let has_fp = {
+                // Save reader state before matching periods.
+                let reader_no_fp = reader.clone();
 
-            // Match second period to disambiguate between trailing floating-points and range
-            // expressions.
-            if match_str(reader, ".") {
-                return Some(TokenNumberLit {
-                    prefix,
-                    span: Span::new(&start, &reader.prev_loc()),
-                    int_part,
-                    float_part: None,
-                    exp_part: None,
-                });
-            }
+                // Match decimal point.
+                let has_fp = match_str(reader, ".");
 
-            // Otherwise, attempt to match the decimal part.
+                // Match second period to disambiguate between trailing floating-points and range
+                // expressions.
+                if match_str(reader, ".") {
+                    *reader = reader_no_fp;
+                    return Ok(Some(TokenNumberLit {
+                        prefix,
+                        span: Span::new(&start, &reader.prev_loc()),
+                        int_part,
+                        float_part: None,
+                        exp_part: None,
+                    }));
+                }
+
+                has_fp
+            };
+
             if has_fp {
                 if prefix != NumberPrefix::Decimal {
-                    panic!(
-                        "Cannot specify a floating part for non-decimal numbers at {}.",
-                        reader.prev_loc().pos()
-                    );
+                    diag.fatal(
+                        reader.prev_loc().char_span(),
+                        "Cannot specify a floating part for non-decimal numbers.",
+                    )?;
                 }
 
                 Some(tokenize_read_digits(reader, &DIGITS_DECIMAL).collect())
@@ -973,7 +1015,10 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
             let digits = tokenize_read_digits(reader, &DIGITS_DECIMAL).collect::<String>();
 
             if digits.is_empty() {
-                panic!("Exponent must be followed with one or more digits.");
+                diag.fatal(
+                    reader.prev_loc().char_span(),
+                    "Explicit exponent must be followed by one or more decimal digits.",
+                )?;
             }
 
             Some((is_positive, digits))
@@ -981,13 +1026,13 @@ pub fn group_match_number_lit(reader: &mut FileReader) -> Option<TokenNumberLit>
             None
         };
 
-        Some(TokenNumberLit {
+        Ok(Some(TokenNumberLit {
             prefix,
             span: Span::new(&start, &reader.prev_loc()),
             int_part,
             float_part,
             exp_part,
-        })
+        }))
     })
 }
 

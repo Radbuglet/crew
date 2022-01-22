@@ -110,7 +110,7 @@ pub trait LookaheadReader: Clone {
     /// Attempts to match the reader sequence using the handler, committing the state if the return
     /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
     /// ignoring all reader state changes otherwise.
-    fn lookahead<F, R>(&mut self, handler: F) -> R::Ret
+    fn lookahead<F, R>(&mut self, handler: F) -> R::LookaheadRes
     where
         F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
@@ -126,7 +126,7 @@ pub trait LookaheadReader: Clone {
     {
         let mut lookahead = self.clone();
         let res = handler(&mut lookahead);
-        if res.is_truthy() {
+        if res.should_commit() {
             *self = lookahead;
         }
         res
@@ -134,7 +134,7 @@ pub trait LookaheadReader: Clone {
 
     /// Forks the reader and peaks ahead without ever committing the result. Will unwrap any returned
     /// [LookaheadResult]s.
-    fn peek_ahead<F, R>(&self, handler: F) -> R::Ret
+    fn peek_ahead<F, R>(&self, handler: F) -> R::LookaheadRes
     where
         F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
@@ -154,38 +154,31 @@ pub trait LookaheadReader: Clone {
     }
 }
 
+/// A [LookaheadResult] tells [LookaheadReader::lookahead] whether the lookahead matched and can
+/// unwrap itself into a simpler form for consumers of that lookahead.
 pub trait LookaheadResult {
-    type Ret;
+    type LookaheadRes;
 
-    fn is_truthy(&self) -> bool;
-    fn into_result(self) -> Self::Ret;
-}
-
-pub trait RepeatResult: Sized {
-    type Ret;
-
-    /// Attempts to unwrap the result into the value returned by the iterator. The first element
-    /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
-    /// regardless if the result is `None`.
-    fn into_stream_result(self) -> Option<(bool, Self::Ret)>;
+    fn should_commit(&self) -> bool;
+    fn into_result(self) -> Self::LookaheadRes;
 }
 
 impl LookaheadResult for bool {
-    type Ret = Self;
+    type LookaheadRes = Self;
 
-    fn is_truthy(&self) -> bool {
+    fn should_commit(&self) -> bool {
         *self
     }
 
-    fn into_result(self) -> Self::Ret {
+    fn into_result(self) -> Self::LookaheadRes {
         self
     }
 }
 
 impl RepeatResult for bool {
-    type Ret = ();
+    type RepeatRes = ();
 
-    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
         match self {
             true => Some((true, ())),
             false => None,
@@ -194,49 +187,93 @@ impl RepeatResult for bool {
 }
 
 impl<T> LookaheadResult for Option<T> {
-    type Ret = Self;
+    type LookaheadRes = Self;
 
-    fn is_truthy(&self) -> bool {
+    fn should_commit(&self) -> bool {
         self.is_some()
     }
 
-    fn into_result(self) -> Self::Ret {
+    fn into_result(self) -> Self::LookaheadRes {
         self
     }
 }
 
 impl<T> RepeatResult for Option<T> {
-    type Ret = T;
+    type RepeatRes = T;
 
-    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
         self.map(|value| (true, value))
     }
 }
 
-impl<T, E> LookaheadResult for Result<T, E> {
-    type Ret = Self;
+pub type PResult<T, E> = Result<Option<T>, E>;
+pub type BarePResult<T> = PResult<T, ()>;
 
-    fn is_truthy(&self) -> bool {
-        self.is_ok()
+impl<T, E> LookaheadResult for PResult<T, E> {
+    type LookaheadRes = Self;
+
+    fn should_commit(&self) -> bool {
+        match self {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(_) => true,
+        }
     }
 
-    fn into_result(self) -> Self::Ret {
+    fn into_result(self) -> Self {
         self
     }
 }
 
-impl<T, E> RepeatResult for Result<T, E> {
-    type Ret = Result<T, E>;
+// === Repetition matching === //
 
-    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
+/// A [RepeatResult] tells a [ConsumeWhileIter] two things:
+///
+/// 1. Whether it should continue iterating or return a value.
+/// 2. Whether to commit the lookahead for that specific iteration (inherited from [LookaheadResult]).
+///
+pub trait RepeatResult: Sized + LookaheadResult {
+    type RepeatRes;
+
+    /// Attempts to unwrap the result into the value returned by the iterator. The first element
+    /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
+    /// regardless if the result is `None`.
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)>;
+}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum RepFlow<T> {
+    Continue(T),
+    Finish(T),
+    Reject,
+}
+
+impl<T> LookaheadResult for RepFlow<T> {
+    type LookaheadRes = Self;
+
+    fn should_commit(&self) -> bool {
         match self {
-            res @ Ok(_) => Some((true, res)),
-            res @ Err(_) => Some((false, res)),
+            Self::Reject => false,
+            _ => true,
         }
+    }
+
+    fn into_result(self) -> Self::LookaheadRes {
+        self
     }
 }
 
-// === Repetition matching === //
+impl<T> RepeatResult for RepFlow<T> {
+    type RepeatRes = T;
+
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
+        match self {
+            Self::Continue(value) => Some((true, value)),
+            Self::Finish(value) => Some((false, value)),
+            Self::Reject => None,
+        }
+    }
+}
 
 pub struct ConsumeWhileIter<'a, R, F, O>
 where
@@ -272,7 +309,7 @@ where
     F: FnMut(&mut R) -> O,
     O: LookaheadResult + RepeatResult,
 {
-    type Item = <O as RepeatResult>::Ret;
+    type Item = <O as RepeatResult>::RepeatRes;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.finished {
@@ -300,40 +337,6 @@ where
 {
     fn drop(&mut self) {
         for _ in self {}
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum RepFlow<T> {
-    Continue(T),
-    Finish(T),
-    Reject,
-}
-
-impl<T> LookaheadResult for RepFlow<T> {
-    type Ret = Self;
-
-    fn is_truthy(&self) -> bool {
-        match self {
-            Self::Reject => false,
-            _ => true,
-        }
-    }
-
-    fn into_result(self) -> Self::Ret {
-        self
-    }
-}
-
-impl<T> RepeatResult for RepFlow<T> {
-    type Ret = T;
-
-    fn into_stream_result(self) -> Option<(bool, Self::Ret)> {
-        match self {
-            Self::Continue(value) => Some((true, value)),
-            Self::Finish(value) => Some((false, value)),
-            Self::Reject => None,
-        }
     }
 }
 
@@ -365,7 +368,7 @@ where
     Reader: LookaheadReader,
     FDel: FnMut(&mut Reader) -> Res,
     Res: LookaheadResult,
-    Res::Ret: Default,
+    Res::LookaheadRes: Default,
 {
     pub fn new(match_del: FDel, require_leading: bool) -> Self {
         Self {
@@ -383,13 +386,13 @@ where
         self.first
     }
 
-    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::Ret> {
+    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::LookaheadRes> {
         if self.first {
             self.first = false;
             Some(Default::default())
         } else {
             let res = reader.lookahead_raw(&mut self.match_del);
-            if res.is_truthy() {
+            if res.should_commit() {
                 Some(res.into_result())
             } else {
                 None
@@ -515,39 +518,6 @@ impl<T, E> StreamResult for Result<Option<T>, E> {
             Ok(Some(success)) => Some(Ok(success)),
             Ok(None) => None,
             Err(err) => Some(Err(err)),
-        }
-    }
-}
-
-// === Parse results === //
-
-pub type PResult<T, E> = Option<Result<T, E>>;
-
-pub enum ParseInstr<T, E> {
-    Ok(T),
-    Uncommitted,
-    ErrRestore(E),
-    ErrContinue(E),
-}
-
-impl<T, E> LookaheadResult for ParseInstr<T, E> {
-    type Ret = PResult<T, E>;
-
-    fn is_truthy(&self) -> bool {
-        match self {
-            ParseInstr::Ok(_) => true,
-            ParseInstr::ErrContinue(_) => true,
-            ParseInstr::Uncommitted => false,
-            ParseInstr::ErrRestore(_) => false,
-        }
-    }
-
-    fn into_result(self) -> Self::Ret {
-        match self {
-            ParseInstr::Ok(val) => Some(Ok(val)),
-            ParseInstr::Uncommitted => None,
-            ParseInstr::ErrRestore(err) => Some(Err(err)),
-            ParseInstr::ErrContinue(err) => Some(Err(err)),
         }
     }
 }
