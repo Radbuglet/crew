@@ -31,7 +31,9 @@ use crate::syntax::diagnostic::Diagnostics;
 use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
-use crate::util::reader::{match_choice, BarePResult, LookaheadReader, RepFlow, StreamReader};
+use crate::util::reader::{
+    invert_p_result, match_choice, BarePResult, LookaheadReader, RepFlow, StreamReader,
+};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -641,8 +643,10 @@ pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<
 
                     // We match escape sequences before any special delimiter characters because the
                     // escape might be for a delimiter.
-                    if let Some(char) = string_match_escape(reader) {
-                        text.push(char);
+                    if let Some(char) = invert_p_result(string_match_escape(reader, diag)) {
+                        if let Ok(char) = char {
+                            text.push(char);
+                        }
                         continue;
                     }
 
@@ -694,9 +698,9 @@ pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<
                         continue;
                     }
 
-                    panic!(
-                        "Unexpected character in string at {}!",
-                        reader.next_loc().pos()
+                    diag.display_error(
+                        reader.prev_loc().char_span(),
+                        "Unexpected character in string.",
                     );
                 }
             }
@@ -712,7 +716,10 @@ pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<
                 }
 
                 if reader.peek() == ReadAtom::Eof {
-                    panic!("Unexpected EOF while parsing block comment!");
+                    diag.fatal(
+                        reader.next_loc().char_span(),
+                        "Unexpected \"<EOF>\" while parsing block quote.",
+                    )?;
                 }
 
                 // Yes, this ignores invalid unicode characters. Comments really are the wild west.
@@ -1064,8 +1071,10 @@ pub fn string_match_multiline_escape(reader: &mut FileReader) -> bool {
     }
 }
 
-pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
+pub fn string_match_escape(reader: &mut FileReader, diag: &mut Diagnostics) -> BarePResult<char> {
     reader.lookahead(|reader| {
+        let escape_start = reader.next_loc();
+
         if match_str(reader, "\\") {
             let escape = match reader.consume() {
                 // ASCII escapes
@@ -1087,50 +1096,57 @@ pub fn string_match_escape(reader: &mut FileReader) -> Option<char> {
                         .collect::<String>();
 
                     if hex.len() != 2 {
-                        panic!("{}: ASCII character escapes expect exactly two hexadecimal digits.", reader.prev_loc().pos());
+                        diag.fatal(
+                            Span::new(escape_start, reader.prev_loc()),
+                            "ASCII character escapes expect exactly two hexadecimal digits."
+                        )?;
                     }
 
                     let char = char::from_u32(u8::from_str_radix(&hex, 16).unwrap() as u32);
 
                     match char {
                         Some(char) if char.is_ascii() => char,
-                        _ => panic!(
-                            "{}: ASCII character escape {} must be less than 0x7F (the highest ASCII character)",
-                            reader.prev_loc().pos(),
-                            hex,
-                        ),
+                        _ => diag.fatal(
+                            Span::new(escape_start, reader.prev_loc()),
+                            format!("ASCII character escape 0x{} must be less than 0x7F (the highest ASCII character)", hex)
+                        )?,
                     }
                 }
                 ReadAtom::Codepoint('u') => {
                     if !match_str(reader, "{") {
-                        panic!("{}: Expected `{{` after start of Unicode escape (`\\u`)", reader.prev_loc().pos());
+                        diag.fatal(
+                            Span::new(escape_start, reader.prev_loc()),
+                            "Expected `{` after start of Unicode escape (`\\u`)",
+                        )?;
                     }
 
                     let hex = tokenize_read_digits(reader, DIGITS_HEXADECIMAL).take(6).collect::<String>();
 
                     if !match_str(reader, "}") {
-                        panic!("{}: Expected `}}` at the end of Unicode escape.", reader.prev_loc().pos());
+                        diag.fatal(
+                            Span::new(escape_start, reader.prev_loc()),
+                            "Expected `}` at the end of Unicode escape.",
+                        )?;
                     }
 
                     let char = char::from_u32(u32::from_str_radix(&hex, 16).unwrap());
 
                     match char {
                         Some(char) => char,
-                        _ => panic!(
-                            "{}: Unicode character escape \\u{{{}}} forms an invalid codepoint.",
-                            reader.prev_loc().pos(),
-                            hex,
-                        ),
+                        _ => diag.fatal(
+                            Span::new(escape_start, reader.prev_loc()),
+                            format!("Unicode character escape \\u{{{}}} forms an invalid codepoint.", hex),
+                        )?,
                     }
                 },
-                _ => panic!(
-                    "Invalid character escape sequence at {}!",
-                    reader.prev_loc().pos()
-                ),
+                _ => diag.fatal(
+                    Span::new(escape_start, reader.prev_loc()),
+                    "Invalid escape code.",
+                )?,
             };
-            Some(escape)
+            Ok(Some(escape))
         } else {
-            None
+            Ok(None)
         }
     })
 }

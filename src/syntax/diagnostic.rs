@@ -193,9 +193,9 @@ impl Message {
             // Handle character
             let print_char = |char: &str| {
                 if in_span {
-                    print!("{}", char);
+                    print!("{}", char.bold());
                 } else {
-                    print!("{}", char.bright_black());
+                    print!("{}", char);
                 }
             };
 

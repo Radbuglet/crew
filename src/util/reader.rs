@@ -225,6 +225,14 @@ impl<T, E> LookaheadResult for PResult<T, E> {
     }
 }
 
+pub fn invert_p_result<T, E>(result: PResult<T, E>) -> Option<Result<T, E>> {
+    match result {
+        Ok(Some(present)) => Some(Ok(present)),
+        Ok(None) => None,
+        Err(err) => Some(Err(err)),
+    }
+}
+
 // === Repetition matching === //
 
 /// A [RepeatResult] tells a [ConsumeWhileIter] two things:
