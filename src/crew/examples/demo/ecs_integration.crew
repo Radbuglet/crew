@@ -1,0 +1,61 @@
+pub class Map {
+	...
+}
+
+pub class ArchStorage {
+	pub in type K;
+	pub in type V;
+
+	pub in val map: Map impl {
+		type K = self.K;
+		type V = ComponentHandle<Component = self.V>;
+
+		...
+	};
+}
+
+pub class ComponentHandle {
+	pub in type Component;
+
+	pub val entity: EntityId;
+	pub out val comp: Component;
+}
+
+pub class ViewportManager {
+	//> Type parameters
+	pub in type Viewport: Viewport;
+	pub in type ViewportMap: Default + Map<
+		K = WindowId,
+		V = Self.Viewport,
+	>;
+
+	type DrawCx = Self.Viewport.Cx;
+
+	//> Inputs
+	in val gfx: GfxSingleton;
+
+	//> Fields
+	pub val viewports: Self.ViewportMap;
+
+	//> Constructors
+	pub static fn new() -> Self {
+		Self {
+			viewports: Self.ViewportMap.default(),
+		}
+	}
+
+	//> Methods
+	pub fn requestFrame(cx: Self.DrawCx) -> AsyncTask<...> {
+
+	}
+}
+
+pub class Viewport {
+	pub in type Cx;
+
+	pub in fn onResize(cx: Self.Cx);
+
+	pub fn acquire(cx: Self.Cx, queue: Queue) {
+		...
+	}
+}

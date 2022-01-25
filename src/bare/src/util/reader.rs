@@ -175,17 +175,6 @@ impl LookaheadResult for bool {
     }
 }
 
-impl RepeatResult for bool {
-    type RepeatRes = ();
-
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        match self {
-            true => Some((true, ())),
-            false => None,
-        }
-    }
-}
-
 impl<T> LookaheadResult for Option<T> {
     type LookaheadRes = Self;
 
@@ -195,14 +184,6 @@ impl<T> LookaheadResult for Option<T> {
 
     fn into_result(self) -> Self::LookaheadRes {
         self
-    }
-}
-
-impl<T> RepeatResult for Option<T> {
-    type RepeatRes = T;
-
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        self.map(|value| (true, value))
     }
 }
 
@@ -225,11 +206,51 @@ impl<T, E> LookaheadResult for PResult<T, E> {
     }
 }
 
-pub fn invert_p_result<T, E>(result: PResult<T, E>) -> Option<Result<T, E>> {
-    match result {
-        Ok(Some(present)) => Some(Ok(present)),
-        Ok(None) => None,
-        Err(err) => Some(Err(err)),
+pub trait PResultExt {
+    type Success;
+    type Error;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>>;
+
+    fn expect_with<F>(self, on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error;
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error>;
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default;
+}
+
+impl<T, E> PResultExt for PResult<T, E> {
+    type Success = T;
+    type Error = E;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>> {
+        match self {
+            Ok(Some(present)) => Some(Ok(present)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
+    }
+
+    fn expect_with<F>(self, mut on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error,
+    {
+        self.invert().unwrap_or_else(|| Err(on_missing()))
+    }
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error> {
+        self.invert().unwrap_or(Err(on_missing))
+    }
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default,
+    {
+        self.expect_with(Default::default)
     }
 }
 
@@ -247,6 +268,25 @@ pub trait RepeatResult: Sized + LookaheadResult {
     /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
     /// regardless if the result is `None`.
     fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)>;
+}
+
+impl RepeatResult for bool {
+    type RepeatRes = ();
+
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
+        match self {
+            true => Some((true, ())),
+            false => None,
+        }
+    }
+}
+
+impl<T> RepeatResult for Option<T> {
+    type RepeatRes = T;
+
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
+        self.map(|value| (true, value))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]

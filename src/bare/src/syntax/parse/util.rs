@@ -1,10 +1,11 @@
 use crate::syntax::span::Span;
 use crate::syntax::token::{
-    GroupDelimiter, PunctChar, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
+    GroupDelimiter, PunctChar, Token, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
     TokenStreamReader, TokenStringLit,
 };
 use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
+use std::fmt::{Debug, Display, Formatter};
 
 // === Syntactic element matchers === //
 
@@ -130,10 +131,14 @@ pub struct IdentOrKw<'a> {
     pub kw: Option<AstKeyword>,
 }
 
+pub fn util_decode_keyword(name: &str) -> Option<AstKeyword> {
+    AstKeyword::find_where(|_, text| *text == name)
+}
+
 pub fn util_match_ident_or_kw<'a>(reader: &mut TokenStreamReader<'a>) -> Option<IdentOrKw<'a>> {
     reader.lookahead(|reader| {
         let raw = reader.consume()?.try_cast_ref::<TokenIdent>()?;
-        let kw = AstKeyword::find_where(|_, text| *text == raw.text.as_str());
+        let kw = util_decode_keyword(raw.text.as_str());
         Some(IdentOrKw { raw, kw })
     })
 }
@@ -246,6 +251,45 @@ pub fn util_match_func_arrow(reader: &mut TokenStreamReader) -> Option<Span> {
 
 pub fn util_match_ellipsis(reader: &mut TokenStreamReader) -> Option<Span> {
     util_match_punct_seq(reader, ELLIPSIS)
+}
+
+// === Diagnostics === //
+
+pub fn util_next_token_span(reader: &mut TokenStreamReader) -> Span {
+    match reader.peek() {
+        Some(token) => token.full_span(),
+        None => reader.next_loc().char_span(),
+    }
+}
+
+pub fn util_stringify_next_token<'a>(
+    reader: &'a mut TokenStreamReader,
+) -> FmtTokenEncounterName<'a> {
+    util_get_token_encounter_name(reader.peek())
+}
+
+pub fn util_get_token_encounter_name(token: Option<&Token>) -> FmtTokenEncounterName<'_> {
+    FmtTokenEncounterName { token }
+}
+
+pub struct FmtTokenEncounterName<'a> {
+    token: Option<&'a Token>,
+}
+
+impl Display for FmtTokenEncounterName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.token {
+            Some(Token::Group(group)) => f.write_str(group.delimiter.meta().encounter_name),
+            Some(Token::Ident(ident)) => match util_decode_keyword(ident.text.as_str()) {
+                Some(kw) => Display::fmt(&format_args!("{} keyword", kw.meta()), f),
+                None => Display::fmt(&format_args!("identifier \"{}\"", ident.text), f),
+            },
+            Some(Token::Punct(punct)) => punct.char.fmt(f),
+            Some(Token::StringLit(_)) => Display::fmt("string literal", f),
+            Some(Token::NumberLit(_)) => Display::fmt("number literal", f),
+            None => Display::fmt("end of group", f),
+        }
+    }
 }
 
 // === Generic matchers === //

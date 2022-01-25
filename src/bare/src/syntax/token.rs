@@ -32,7 +32,7 @@ use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
 use crate::util::reader::{
-    invert_p_result, match_choice, BarePResult, LookaheadReader, RepFlow, StreamReader,
+    match_choice, BarePResult, LookaheadReader, PResultExt, RepFlow, StreamReader,
 };
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
@@ -294,23 +294,27 @@ enum_meta! {
         File = GroupDelimiterMeta {
             name: "file",
             closing_name: "<EOF>",
+            encounter_name: "a file delimited group (this should not be possible)",
             left: None,
             right: CharOrEof::Eof,
         },
         Paren = GroupDelimiterMeta {
             name: "parenthesis",
             closing_name: ")",
+            encounter_name: "parenthetical group",
             left: Some(CharOrEof::Char('(')),
             right: CharOrEof::Char(')'),
         },
         Brace = GroupDelimiterMeta {
             name: "brace",
             closing_name: "}",
+            encounter_name: "braced group",
             left: Some(CharOrEof::Char('{')),
             right: CharOrEof::Char('}'),
         },
         Bracket = GroupDelimiterMeta {
             name: "square bracket",
+            encounter_name: "bracketed group",
             closing_name: "]",
             left: Some(CharOrEof::Char('[')),
             right: CharOrEof::Char(']'),
@@ -372,16 +376,17 @@ enum_meta! {
 
 #[derive(Debug, Copy, Clone)]
 pub struct GroupDelimiterMeta {
-    name: &'static str,
-    closing_name: &'static str,
-    left: Option<CharOrEof>,
-    right: CharOrEof,
+    pub name: &'static str,
+    pub closing_name: &'static str,
+    pub encounter_name: &'static str,
+    pub left: Option<CharOrEof>,
+    pub right: CharOrEof,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct NumberPrefixMeta {
-    prefix: Option<char>,
-    digits: &'static str,
+    pub prefix: Option<char>,
+    pub digits: &'static str,
 }
 
 // === IR printing === //
@@ -643,7 +648,7 @@ pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<
 
                     // We match escape sequences before any special delimiter characters because the
                     // escape might be for a delimiter.
-                    if let Some(char) = invert_p_result(string_match_escape(reader, diag)) {
+                    if let Some(char) = string_match_escape(reader, diag).invert() {
                         if let Ok(char) = char {
                             text.push(char);
                         }

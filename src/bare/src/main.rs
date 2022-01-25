@@ -27,7 +27,7 @@ fn main() -> Result<(), ()> {
 
     // Tokenize source code
     let tokens = {
-        let source = SourceFile::from_file(PathBuf::from("examples/syn/class.crew")).unwrap();
+        let source = SourceFile::from_file(PathBuf::from("examples/syn/mod_item.crew")).unwrap();
         let mut diag = Diagnostics::new();
         let tokens = tokenize_file(&mut source.reader(), &mut diag);
         diag.temp_display();
