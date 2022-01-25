@@ -27,11 +27,8 @@ type AliasName = ...;
 // Structures
 // (unions may be achieved with the "@repr(union)" annotation)
 struct StructName {
-	field field_1: FieldType;
-	field field_2: OtherFieldType;
-
-	// Structs are also modules so all the normal module items can
-	// go here as well.
+	field_1: FieldType,
+	field_2: OtherFieldType,
 }
 
 struct StructName2(Type1, Type2);
@@ -78,6 +75,11 @@ const CONST_NAME: Type = <const initializer>;
 // "new prop" defines a new proposition.
 new prop PropName = <prop>;
 
+// Users can specify which modules are allowed to add on to an
+// existing proposition. If left empty, everyone can add to the
+// proposition.
+new(visible::to::{path1, path2}) prop PropName = <prop>;
+
 // "add prop" defines an additional way in
 // which a proposition can be proven. A
 // proposition is true so long as at least
@@ -85,7 +87,7 @@ new prop PropName = <prop>;
 add prop PropName = <prop>;
 
 // Symbols are used by macros to define names that only they
-// can access. TODO: How can macros generate new unique symbols?
+// can access.
 symbol MY_SYMBOL_NAME;
 
 struct [MY_SYMBOL_NAME](Type1, Type2);
@@ -100,28 +102,23 @@ Module items may be referenced as either their local name (if defined in the cur
 
 ```
 crate::path::to:Item                  // Relative to the current crate.
+
 ::other_crate_name::path::to::Item    // Relative to the root of a crate named "other_crate_name".
+
 super::path::to::Item                 // Relative to the parent module. Can appear anywhere in the path.
-^^::path::to::Item                    // Relative to the nth ancestor where "n" is the number of carets. Can appear anywhere in the path.
-moduleof(value_name)::path::to::Item  // Relative to the module defined by the type of "value_name".
-```
 
-The following directives may also appear in a module:
+^^::path::to::Item                    // Relative to the nth ancestor where "n" is the number of carets. Can appear
+                                      // anywhere in the path.
 
-```
-// Defines a statically resolved `if` statement whose branches are only looked
-// at by the compiler if the constant expression evaluates to that branch. 
-static if <const expr> {
-	<if true scope>
-} else {
-	<if false scope>
-}
+StructName::path::to::Item            // Relative to the associated module of a type.
+                                      // If the type is not-concrete (i.e. bound by a generic), this operation must be
+                                      // wrapped in an "unsafe" block because it violates substitution failure principles.
+                                      // Standard library macros can provide userland mechanisms to make this access safe.
 
-// Produces a compiler error when reached.
-comp_error(<const expr message>);
-
-// Produces a compiler warning when reached. May be silenced.
-comp_warn(<const expr namespace>, <const expr message>);
+moduleof(value_name)::path::to::Item  // Retrieves the associated module of the type of a specified field. Just like with
+                                      // access to a non-concrete type's associated module, it is unsafe to access the
+                                      // children of a non-concretely typed field's associated module and will also require
+                                      // an "unsafe" block.
 ```
 
 All of these items can be tagged with attributes which may be visible to the Bare Crew compiler or the runtime:
@@ -135,8 +132,8 @@ struct Documented;
 
 @repr("union")
 struct MyUnion {
-	field variant_1: u32;
-	field variant_2: i32;
+	variant_1: u32,
+	variant_2: i32,
 }
 
 @my_custom_metadata(with, args)
@@ -170,7 +167,27 @@ mod child {
 }
 ```
 
+Structs and enums contain their own "associated module" to which users can add using the `attach` qualifier:
+
+```
+pub struct MyStruct {
+    foo: u32,
+}
+
+attach(MyStruct) fn new() -> MyStruct {
+    MyStruct {
+        foo: 32,
+    }
+}
+
+fn main() {
+    val my_instance = MyStruct::new();
+}
+```
+
 All items except `use` (yes, `macro` can be templated... because why not?) may be tagged with the `template` qualifier, which specifies the item's ability to vary over arbitrary object types. Templating information is preserved into the compiler's binary output to allow individual runtimes to decide how to monomorphize the items. Templates can define a where clause proposition constraining the templated parameters. For a given templated section, all substitutions of its descendants must also be valid (i.e. substitution failure is an error).
+
+**TODO:** Replace template syntax with a more familiar one.
 
 ```
 use core::intrinsics::{isUnsignedNumber, canCompare};
@@ -243,10 +260,10 @@ template<T> extern fn ptr_to_usize(ptr: *const T) -> usize;
 // Sorry, no `usize_to_ptr`. Provenance rules are too tricky!
 ```
 
-Functions can also be tagged with `const` to allow them to be called by const-fns:
+There is no `const` qualifier for functions. All functions are automatically `const` callable:
 
 ```
-const fn addOne(x: u32) -> u32 {
+fn addOne(x: u32) -> u32 {
 	x + 1
 }
 
@@ -294,7 +311,45 @@ Function bodies take the form of a block expression, which is a mix of statement
 // TODO: Describe the Rust-like expression grammar.
 
 // Converts a proposition to a `const` bool.
-constprop(PropHere)
+prop(PropHere)
+```
+
+Bare Crew supports tagged [UFCS](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) as its primary way of supporting method-call syntax. Functions whose first parameter is qualified with `this` may be called with `object.functionName(...)` and `object.functionName` syntax so long as the function can be unambiguously resolved to that `functionName` and the function is in scope (or is exposed by a struct module which is itself in scope). 
+
+```
+pub struct MyClass {
+    foo: u32,
+    bar: u32,
+}
+
+attach fn doSomething<T>(this T self)
+where
+    crew_lang::core::inherits(T, MyClass)
+{
+    val self = crew_lang::core::deref<T, MyClass>(self);
+    
+    // (do computations with self here)
+}
+
+attach fn my_property(this MyClass self) {
+    self.foo + self.bar
+}
+
+fn myFunction<T>(value: T)
+where
+    crew_lang::core::inherits(T, MyClass)
+{
+    // "MyClass::doSomething" is in scope and is the only function which can be called
+    // for all valid choices of "T". 
+    value.doSomething();
+    
+    // match_prop! is a standard library macro which allows users to match exactly one branch
+    // depending on the propositions.
+    val my_value = core::match_prop! {
+        T is MyClass: value.my_property,
+        _: 0,
+    };
+}
 ```
 
 Base Crew is tokenized by groups, forming a token tree. This allows the user to invoke macros that haven't been declared yet at the expense of always forcing braces in a token stream to be balanced. Macros are defined as functions on these token trees which return a replacement token tree. Each token has two scopes attached to it, a diagnostic scope and any number of lexical scopes. The mandatory diagnostic scope indicates the source span that should be highlighted when producing compiler diagnostics of the produced code. Diagnostic scopes may also be entirely fabricated and point to fake macro-generated syntax. Lexical scopes indicate module and function contexts where a given source span may derive its named items. Macros may also introduce new programmatically generated macros into the scope by introducing the special `ProcMacroDef` token. These macros can be called in the following ways:
@@ -307,9 +362,14 @@ my_macro![token tree {here}]
 my_macro! {
 	token tree {here}
 }
+
+my_macro! { scope_1 } ~ (scope 2) ~ [scope 3]
 ```
 
-Language authors may also define module macros which are invoked as if they were module items in a module. Unlike regular import macros, these must be defined before their use. These are enough to define the entire Crew language.
+Language authors may also define module macros which are invoked as if they were module items in a module. Unlike regular import macros, these must be defined before their use. These macros may also define custom binary operators (e.g. the `:>` inheritance constraint in Crew) for use inside propositions or expressions.
+
+**TODO:** How can users write const-exprs that get resolved at the templating level?
+**TODO:** Describe core language overloads.
 
 ## License
 
