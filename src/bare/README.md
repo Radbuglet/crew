@@ -72,7 +72,11 @@ const CONST_NAME: Type = <const initializer>;
 // converted into `const` bools but not the other way
 // around.
 
-// "new prop" defines a new proposition.
+// "prop" defines a new proposition which cannot be extended.
+prop PropName = <prop>;
+
+// "new prop" defines a new proposition which can be extended
+// using "add prop" statements.
 new prop PropName = <prop>;
 
 // Users can specify which modules are allowed to add on to an
@@ -115,10 +119,30 @@ StructName::path::to::Item            // Relative to the associated module of a 
                                       // wrapped in an "unsafe" block because it violates substitution failure principles.
                                       // Standard library macros can provide userland mechanisms to make this access safe.
 
-moduleof(value_name)::path::to::Item  // Retrieves the associated module of the type of a specified field. Just like with
-                                      // access to a non-concrete type's associated module, it is unsafe to access the
-                                      // children of a non-concretely typed field's associated module and will also require
-                                      // an "unsafe" block.
+typeof(value_name)::path::to::Item    // "typeof" expressions, which resolve to the type of the specified variable/field,
+                                      // can be used in place of a type. The same rules regarding generic substitution
+                                      // apply here as well.
+```
+
+Every item in a module can be associated with an item defined in its ancestor modules. Associating items with a module
+allows them to be accessed as sub-items of the item (e.g. `MyStruct::associated_function`), ensures that extension
+functions can be called if the parent item is in scope (described later), and allows users to decompose generic types through their
+associated modules, enabling simple generic polymorphism.
+
+```
+pub struct MyStruct {
+    foo: u32,
+}
+
+attach(MyStruct) fn new() -> MyStruct {
+    MyStruct {
+        foo: 32,
+    }
+}
+
+fn main() {
+    val my_instance = MyStruct::new();
+}
 ```
 
 All of these items can be tagged with attributes which may be visible to the Bare Crew compiler or the runtime:
@@ -167,55 +191,34 @@ mod child {
 }
 ```
 
-Structs and enums contain their own "associated module" to which users can add using the `attach` qualifier:
-
-```
-pub struct MyStruct {
-    foo: u32,
-}
-
-attach(MyStruct) fn new() -> MyStruct {
-    MyStruct {
-        foo: 32,
-    }
-}
-
-fn main() {
-    val my_instance = MyStruct::new();
-}
-```
-
-All items except `use` (yes, `macro` can be templated... because why not?) may be tagged with the `template` qualifier, which specifies the item's ability to vary over arbitrary object types. Templating information is preserved into the compiler's binary output to allow individual runtimes to decide how to monomorphize the items. Templates can define a where clause proposition constraining the templated parameters. For a given templated section, all substitutions of its descendants must also be valid (i.e. substitution failure is an error).
-
-**TODO:** Replace template syntax with a more familiar one.
+Structs, enums, functions, type aliases, and propositions can all be parameterized by a generic parameter. Templating information is preserved in the compiler's binary output to allow individual runtimes to decide how to monomorphize the items. Type constraints
+can be expressed as an arbitrary proposition over the type parameters using `where`-style generic constraints. All type substitutions must be valid (except when using unsafe non-concrete module access) at both the type checking and generic unification levels.
 
 ```
 use core::intrinsics::{isUnsignedNumber, canCompare};
 
-template<T> new prop myOtherProp = false;
-template<T> add prop myOtherProp = T is u32;
-template<T> add prop myOtherProp = T is i32;
+new prop myOtherProp<T> = false;
+add prop myOtherProp = isUnsignedNumber(T);
+add prop myOtherProp = T is i32;
 
-template<T> where
-	isUnsignedNumber(T)
-mod numerics {
-	use super::*;
-
-	template where  // Templates can take zero parameters.
-		myOtherProp(T)
-	fn addOne(value: T) -> T {
-		value + 1
-	}
-
-	fn subOne(value: T) -> T {
-		value - 1
-	}
+fn addOne<T>(value: T) -> T
+where
+    myOtherProp<T>
+{
+    value + 1
 }
 
-template<T> where
-	canCompare<T> and
+fn subOne<T>(value: T) -> T
+where
+    myOtherProp<T>
+{
+    value - 1
+}
+
+fn min<T>(a: T, b: T) -> T where
+    canCompare<T> and
 	myOtherProp<T>
-fn min(a: T, b: T) -> T {
+{
 	if addOne(a) < addOne(b) { addOne(subOne(a)) } else { b }
 }
 
@@ -227,6 +230,9 @@ fn main() {
 
 	// Implicit parameterization (not always possible)
 	let _ = min(4u32, 3u32);
+	
+	// Implicit explicit parameterization (also not always possible)
+	let _ = min<_>(4u32, 3u32);
 }
 ```
 
@@ -255,7 +261,7 @@ Functions can be tagged with `extern` and leave them to be implemented by the co
 
 ```
 @lang_intrinsic("ptr_to_usize")
-template<T> extern fn ptr_to_usize(ptr: *const T) -> usize;
+extern fn ptr_to_usize<T>(ptr: *const T) -> usize;
 
 // Sorry, no `usize_to_ptr`. Provenance rules are too tricky!
 ```
@@ -270,7 +276,7 @@ fn addOne(x: u32) -> u32 {
 const MY_ARRAY: [u32; addOne(4)] = [1, 2, 3, 4, addOne(5)];
 ```
 
-The Bare Crew runtime exposes the following primitives:
+The Bare Crew runtime exposes the following primitive types:
 
 ```
 // An entirely immutable pointer
@@ -297,12 +303,12 @@ bool      // A boolean
 // The following are special lang-items in the form of structs
 
 // Used to enable mutability inside a "*const T" pointee.
-template<T> struct Cell(T);
+struct Cell<T>(T);
 
 // A non-zero integer.
-template<T> where
-	isPrimitiveNumber(T)
-struct NonZero(T);
+struct NonZero<T>(T)
+where
+    isPrimitiveNumber<T>;
 ``` 
 
 Function bodies take the form of a block expression, which is a mix of statement-style expressions, module items, and a single trailing return expression. Expressions can take the following form:
@@ -314,7 +320,7 @@ Function bodies take the form of a block expression, which is a mix of statement
 prop(PropHere)
 ```
 
-Bare Crew supports tagged [UFCS](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) as its primary way of supporting method-call syntax. Functions whose first parameter is qualified with `this` may be called with `object.functionName(...)` and `object.functionName` syntax so long as the function can be unambiguously resolved to that `functionName` and the function is in scope (or is exposed by a struct module which is itself in scope). 
+Bare Crew supports tagged [UFCS](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) as its primary way of supporting method-call syntax. Functions whose first parameter is qualified with `this` may be called with `object.functionName(...)` and `object.functionName` syntax so long as the function can be unambiguously resolved to that `functionName` and the function is in scope (or in the attached module of an in-scope item). 
 
 ```
 pub struct MyClass {
@@ -322,7 +328,7 @@ pub struct MyClass {
     bar: u32,
 }
 
-attach fn doSomething<T>(this T self)
+fn doSomething<T>(this self: T)
 where
     crew_lang::core::inherits(T, MyClass)
 {
@@ -331,7 +337,7 @@ where
     // (do computations with self here)
 }
 
-attach fn my_property(this MyClass self) {
+fn my_property(this self: MyClass) {
     self.foo + self.bar
 }
 
@@ -368,8 +374,11 @@ my_macro! { scope_1 } ~ (scope 2) ~ [scope 3]
 
 Language authors may also define module macros which are invoked as if they were module items in a module. Unlike regular import macros, these must be defined before their use. These macros may also define custom binary operators (e.g. the `:>` inheritance constraint in Crew) for use inside propositions or expressions.
 
-**TODO:** How can users write const-exprs that get resolved at the templating level?
+**TODO:** How can users write const-exprs that get resolved at the per-generic-instantiation level?
 **TODO:** Describe core language overloads.
+**TODO:** Describe associated proposition modules.
+**TODO:** Generically varying structs (e.g. thin v.s. wide pointers depending on the size proposition)
+**TODO:** Document `unsafe` markers (especially for propositions)
 
 ## License
 
