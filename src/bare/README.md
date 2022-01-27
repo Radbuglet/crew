@@ -67,10 +67,9 @@ static STATIC_NAME: Type = <const initializer>;
 const CONST_NAME: Type = <const initializer>;
 
 // Unparameterized boolean propositions.
-// These are a special type of `const` that is computed
-// solely through first-order logic. `prop`s can be
-// converted into `const` bools but not the other way
-// around.
+// These are a special type of `const` that is computed solely through
+// first-order logic. `prop`s can be converted into `const` bools but
+// not the other way around.
 
 // "prop" defines a new proposition which cannot be extended.
 prop PropName = <prop>;
@@ -345,12 +344,12 @@ fn myFunction<T>(value: T)
 where
     crew_lang::core::inherits(T, MyClass)
 {
-    // "MyClass::doSomething" is in scope and is the only function which can be called
-    // for all valid choices of "T". 
+    // "MyClass::doSomething" is in scope and is the only function which can
+    // be called for all valid choices of "T". 
     value.doSomething();
     
-    // match_prop! is a standard library macro which allows users to match exactly one branch
-    // depending on the propositions.
+    // match_prop! is a standard library macro which allows users to match
+    // exactly one branch depending on the propositions.
     val my_value = core::match_prop! {
         T is MyClass: value.my_property,
         _: 0,
@@ -375,9 +374,13 @@ my_macro! { scope_1 } ~ (scope 2) ~ [scope 3]
 Language authors may also define module macros which are invoked as if they were module items in a module. Unlike regular import macros, these must be defined before their use. These macros may also define custom binary operators (e.g. the `:>` inheritance constraint in Crew) for use inside propositions or expressions.
 
 **TODO:** How can users write const-exprs that get resolved at the per-generic-instantiation level?
+
 **TODO:** Describe core language overloads.
+
 **TODO:** Describe associated proposition modules.
+
 **TODO:** Generically varying structs (e.g. thin v.s. wide pointers depending on the size proposition)
+
 **TODO:** Document `unsafe` markers (especially for propositions)
 
 ## License
