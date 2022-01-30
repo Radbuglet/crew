@@ -38,11 +38,11 @@ struct UnitStruct;
 // Discriminated unions (these may be more efficient than their manual union
 // counterpart because of the way they abuse niche scalar layouts)
 enum EnumName {
-	variant UnitVariantName;
-	variant StructVariantName {
+	UnitVariantName,
+	StructVariantName {
 		field: FieldType,
-	};
-	variant TupleVariantName(Type1, Type2);
+	},
+	TupleVariantName(Type1, Type2),
 }
 
 // The uninhabited type is treated as a first-class citizen of this language.

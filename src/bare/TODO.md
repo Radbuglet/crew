@@ -2,16 +2,17 @@
 
 ## Nitpicks
 
-- [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something
-- [ ] A lot of parser code can be modernized with new idioms.
-- [ ] The bump allocator could be reference-counted per page to allow for more precise memory deallocation, especially during visitor remaps.
-- [ ] We can unify `try_collect` and `collect_into` with the notion of an `ArrayVec`.
-- [ ] `TokenStreams` should also have a slice type.
-- [ ] `Folders` should support the closure-return system.
+- [x] `TokenStreamReaders` should maintain an enclosing span so that `next_loc` and `prev_loc` always return something.
 - [x] The `Folder` API should support relative and absolute positions.
+- [ ] The bump allocator could be reference-counted per page to allow for more precise memory deallocation, especially during visitor remaps.
+- [ ] We might need copy-on-write and visitor utilities.
+- [ ] Enum metadata should be composable.
+- [ ] Move everything to the new bump allocator.
+- [ ] We can unify `try_collect` and `collect_into` with the notion of an `ArrayVec`.
+- [ ] `TokenStreams` should be parameterized by their backing.
+- [ ] `Folders` should support the closure-return system.
 - [ ] Multi-lookahead can be made more ergonomic.
 - [ ] We should implement a task system with async multithreaded execution.
-- [ ] We should really use an interner.
 
 ## Tokenizer
 

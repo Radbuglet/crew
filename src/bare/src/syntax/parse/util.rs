@@ -7,12 +7,167 @@ use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Debug, Display, Formatter};
 
-// === Syntactic element matchers === //
+// === Primitive token matching === //
+
+pub fn util_match_group<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenGroup> {
+    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenGroup>()?))
+}
+
+pub fn util_match_str_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenStringLit> {
+    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenStringLit>()?))
+}
+
+pub fn util_match_num_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenNumberLit> {
+    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenNumberLit>()?))
+}
+
+pub fn util_match_eof(reader: &mut TokenStreamReader) -> Option<()> {
+    reader.lookahead(|reader| reader.consume().is_none().then_some(()))
+}
+
+pub fn util_match_group_delimited<'a>(
+    reader: &mut TokenStreamReader<'a>,
+    expected_delimiter: GroupDelimiter,
+) -> Option<&'a TokenGroup> {
+    reader.lookahead(|reader| match util_match_group(reader) {
+        Some(group @ TokenGroup { delimiter: del, .. }) if *del == expected_delimiter => {
+            Some(group)
+        }
+        _ => None,
+    })
+}
+
+pub fn util_match_punct<'a>(
+    reader: &mut TokenStreamReader<'a>,
+    char: PunctChar,
+    glued: Option<bool>,
+) -> Option<&'a TokenPunct> {
+    reader.lookahead(|reader| {
+        let punct = reader.consume()?.try_cast_ref::<TokenPunct>()?;
+        if punct.char == char && glued.map_or(true, |expected| expected == punct.is_glued) {
+            Some(punct)
+        } else {
+            None
+        }
+    })
+}
+
+pub fn util_match_punct_seq<'a>(
+    reader: &mut TokenStreamReader<'a>,
+    seq: &[PunctChar],
+) -> Option<Span> {
+    assert!(!seq.is_empty());
+
+    reader.lookahead(|reader| {
+        let start = reader.next_loc();
+        let mut glued = None;
+        for char in seq {
+            if util_match_punct(reader, *char, glued).is_none() {
+                return None;
+            }
+            glued = Some(true);
+        }
+
+        Some(Span::new(start, reader.prev_loc()))
+    })
+}
+
+pub fn util_punct_seq_matcher<'a>(
+    seq: &'a [PunctChar],
+) -> impl Fn(&mut TokenStreamReader) -> Option<Span> + 'a {
+    move |reader| util_match_punct_seq(reader, seq)
+}
+
+pub fn util_punct_matcher(punct: PunctChar) -> impl Fn(&mut TokenStreamReader) -> Option<Span> {
+    move |reader| util_match_punct_seq(reader, &[punct])
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TokenLitSeq<'a> {
+    Punct(&'a [PunctChar]),
+    Kw(AstKeyword),
+}
+
+impl TokenLitSeq<'_> {
+    pub fn match_list<I, V>(reader: &mut TokenStreamReader, choices: I) -> Option<V>
+    where
+        I: IntoIterator<Item = (Self, V)>,
+    {
+        for (seq, ret) in choices {
+            if seq.parse(reader).is_some() {
+                return Some(ret);
+            }
+        }
+        None
+    }
+
+    pub fn parse(self, reader: &mut TokenStreamReader) -> Option<Span> {
+        match self {
+            TokenLitSeq::Punct(seq) => util_match_punct_seq(reader, seq),
+            TokenLitSeq::Kw(kw) => util_match_specific_kw(reader, kw).cloned(),
+        }
+    }
+}
+
+// === Diagnostics === //
+
+pub fn util_next_token_span(reader: &mut TokenStreamReader) -> Span {
+    match reader.peek() {
+        Some(token) => token.full_span(),
+        None => reader.next_loc().char_span(),
+    }
+}
+
+pub fn util_stringify_next_token<'a>(
+    reader: &'a mut TokenStreamReader,
+) -> FmtTokenEncounterName<'a> {
+    util_get_token_encounter_name(reader.peek())
+}
+
+pub fn util_get_token_encounter_name(token: Option<&Token>) -> FmtTokenEncounterName<'_> {
+    FmtTokenEncounterName { token }
+}
+
+pub struct FmtTokenEncounterName<'a> {
+    token: Option<&'a Token>,
+}
+
+impl Display for FmtTokenEncounterName<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.token {
+            Some(Token::Group(group)) => f.write_str(group.delimiter.meta().encounter_name),
+            Some(Token::Ident(ident)) => match util_decode_keyword(ident.text.as_str()) {
+                Some(kw) => Display::fmt(&format_args!("{} keyword", kw.meta()), f),
+                None => Display::fmt(&format_args!("identifier \"{}\"", ident.text), f),
+            },
+            Some(Token::Punct(punct)) => punct.char.fmt(f),
+            Some(Token::StringLit(_)) => Display::fmt("string literal", f),
+            Some(Token::NumberLit(_)) => Display::fmt("number literal", f),
+            None => Display::fmt("end of group", f),
+        }
+    }
+}
+
+// === Punct sequence matching === //
 
 pub const TURBO: &'static [PunctChar] = &[PunctChar::Colon, PunctChar::Colon]; // `::`
 pub const FUNC_ARROW: &'static [PunctChar] = &[PunctChar::Dash, PunctChar::Greater]; // `->`
 pub const ELLIPSIS: &'static [PunctChar] =
     &[PunctChar::Period, PunctChar::Period, PunctChar::Period]; // `...`
+
+pub fn util_match_turbo(reader: &mut TokenStreamReader) -> Option<Span> {
+    util_match_punct_seq(reader, TURBO)
+}
+
+pub fn util_match_func_arrow(reader: &mut TokenStreamReader) -> Option<Span> {
+    util_match_punct_seq(reader, FUNC_ARROW)
+}
+
+pub fn util_match_ellipsis(reader: &mut TokenStreamReader) -> Option<Span> {
+    util_match_punct_seq(reader, ELLIPSIS)
+}
+
+// === Keyword matching === //
 
 enum_meta! {
     #[derive(Debug)]
@@ -166,157 +321,4 @@ pub fn util_match_specific_kw<'a>(
             None
         }
     })
-}
-
-pub fn util_match_group<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenGroup> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenGroup>()?))
-}
-
-pub fn util_match_str_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenStringLit> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenStringLit>()?))
-}
-
-pub fn util_match_num_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenNumberLit> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenNumberLit>()?))
-}
-
-pub fn util_match_eof(reader: &mut TokenStreamReader) -> Option<()> {
-    reader.lookahead(|reader| reader.consume().is_none().then_some(()))
-}
-
-pub fn util_match_group_delimited<'a>(
-    reader: &mut TokenStreamReader<'a>,
-    expected_delimiter: GroupDelimiter,
-) -> Option<&'a TokenGroup> {
-    reader.lookahead(|reader| match util_match_group(reader) {
-        Some(group @ TokenGroup { delimiter: del, .. }) if *del == expected_delimiter => {
-            Some(group)
-        }
-        _ => None,
-    })
-}
-
-pub fn util_match_punct<'a>(
-    reader: &mut TokenStreamReader<'a>,
-    char: PunctChar,
-    glued: Option<bool>,
-) -> Option<&'a TokenPunct> {
-    reader.lookahead(|reader| {
-        let punct = reader.consume()?.try_cast_ref::<TokenPunct>()?;
-        if punct.char == char && glued.map_or(true, |expected| expected == punct.is_glued) {
-            Some(punct)
-        } else {
-            None
-        }
-    })
-}
-
-pub fn util_match_punct_seq<'a>(
-    reader: &mut TokenStreamReader<'a>,
-    seq: &[PunctChar],
-) -> Option<Span> {
-    assert!(!seq.is_empty());
-
-    reader.lookahead(|reader| {
-        let start = reader.next_loc();
-        let mut glued = None;
-        for char in seq {
-            if util_match_punct(reader, *char, glued).is_none() {
-                return None;
-            }
-            glued = Some(true);
-        }
-
-        Some(Span::new(start, reader.prev_loc()))
-    })
-}
-
-pub fn util_punct_seq_matcher<'a>(
-    seq: &'a [PunctChar],
-) -> impl Fn(&mut TokenStreamReader) -> Option<Span> + 'a {
-    move |reader| util_match_punct_seq(reader, seq)
-}
-
-pub fn util_punct_matcher(punct: PunctChar) -> impl Fn(&mut TokenStreamReader) -> Option<Span> {
-    move |reader| util_match_punct_seq(reader, &[punct])
-}
-
-pub fn util_match_turbo(reader: &mut TokenStreamReader) -> Option<Span> {
-    util_match_punct_seq(reader, TURBO)
-}
-
-pub fn util_match_func_arrow(reader: &mut TokenStreamReader) -> Option<Span> {
-    util_match_punct_seq(reader, FUNC_ARROW)
-}
-
-pub fn util_match_ellipsis(reader: &mut TokenStreamReader) -> Option<Span> {
-    util_match_punct_seq(reader, ELLIPSIS)
-}
-
-// === Diagnostics === //
-
-pub fn util_next_token_span(reader: &mut TokenStreamReader) -> Span {
-    match reader.peek() {
-        Some(token) => token.full_span(),
-        None => reader.next_loc().char_span(),
-    }
-}
-
-pub fn util_stringify_next_token<'a>(
-    reader: &'a mut TokenStreamReader,
-) -> FmtTokenEncounterName<'a> {
-    util_get_token_encounter_name(reader.peek())
-}
-
-pub fn util_get_token_encounter_name(token: Option<&Token>) -> FmtTokenEncounterName<'_> {
-    FmtTokenEncounterName { token }
-}
-
-pub struct FmtTokenEncounterName<'a> {
-    token: Option<&'a Token>,
-}
-
-impl Display for FmtTokenEncounterName<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.token {
-            Some(Token::Group(group)) => f.write_str(group.delimiter.meta().encounter_name),
-            Some(Token::Ident(ident)) => match util_decode_keyword(ident.text.as_str()) {
-                Some(kw) => Display::fmt(&format_args!("{} keyword", kw.meta()), f),
-                None => Display::fmt(&format_args!("identifier \"{}\"", ident.text), f),
-            },
-            Some(Token::Punct(punct)) => punct.char.fmt(f),
-            Some(Token::StringLit(_)) => Display::fmt("string literal", f),
-            Some(Token::NumberLit(_)) => Display::fmt("number literal", f),
-            None => Display::fmt("end of group", f),
-        }
-    }
-}
-
-// === Generic matchers === //
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum TokenLitSeq<'a> {
-    Punct(&'a [PunctChar]),
-    Kw(AstKeyword),
-}
-
-impl TokenLitSeq<'_> {
-    pub fn match_list<I, V>(reader: &mut TokenStreamReader, choices: I) -> Option<V>
-    where
-        I: IntoIterator<Item = (Self, V)>,
-    {
-        for (seq, ret) in choices {
-            if seq.parse(reader).is_some() {
-                return Some(ret);
-            }
-        }
-        None
-    }
-
-    pub fn parse(self, reader: &mut TokenStreamReader) -> Option<Span> {
-        match self {
-            TokenLitSeq::Punct(seq) => util_match_punct_seq(reader, seq),
-            TokenLitSeq::Kw(kw) => util_match_specific_kw(reader, kw).cloned(),
-        }
-    }
 }

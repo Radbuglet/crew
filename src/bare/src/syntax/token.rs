@@ -15,6 +15,7 @@
 //! - Unbalanced group recovery
 //! - Invalid character recovery
 //! - Literal parsing
+//! - Doc comment lowering
 //! - Shebang ignoring
 //!
 //! We merged the lexing and tokenization stages into one tokenization stage because the way characters

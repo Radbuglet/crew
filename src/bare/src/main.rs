@@ -12,6 +12,7 @@
 #![feature(str_internals)]
 #![feature(unsize)]
 
+pub mod semantic;
 pub mod syntax;
 pub mod util;
 

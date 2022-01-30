@@ -1,3 +1,5 @@
+#![allow(unused_variables)]
+
 use crate::syntax::parse::class_expr::{AstFieldType, AstFuncDef};
 use crate::syntax::parse::module::AstModItem;
 use crate::syntax::parse::path::AstPathDirect;
