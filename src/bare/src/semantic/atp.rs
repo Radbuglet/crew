@@ -1,8 +1,37 @@
+//! Bare Crew type-checking is founded off [first-order logic](fol) (FOL). This module implements an
+//! automated FOL theorem prover which takes in a binary proposition and returns whether it's a
+//! tautology.
+//!
+//! ## Representing Propositions
+//!
+//! TODO
+//!
+//! ## Analytic Tableaux
+//!
+//! Theorem checking in Crew is done using a variant of the [analytic tableaux] method.
+//! TODO
+//!
+//! ## Quantification Semantics
+//!
+//! TODO
+//!
+//! ## Term Tableaux and Forking
+//!
+//! TODO
+//!
+//! ## Semi-Decidability
+//!
+//! Automated FOL proving is only [semidecidable], meaning that while all tautological propositions
+//! can be proven as such, non-tautological propositions may either definitively halt with a rejection
+//! or type check forever. Because the evaluation of non-tautological propositions is typically an
+//! error, proposition evaluation is time limited to a per-module-item constant number of "steps".
+//!
+//! [analytic tableaux]: https://en.wikipedia.org/wiki/Method_of_analytic_tableaux
+//! [fol]: https://en.wikipedia.org/wiki/First-order_logic
+//! [semidecidable]: https://en.wikipedia.org/wiki/Decidability_(logic)#Semidecidability
+
+use crate::util::disjoint_set::DisjointSet;
 use crate::util::fmt::tab;
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::mem::swap;
 use std::rc::Rc;
 
 // === Core === //
@@ -27,16 +56,9 @@ impl Term {
     pub fn new_concrete() -> Self {
         Self::Concrete(Self::new_term_id())
     }
-
-    pub fn guaranteed_neq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Free(a), Self::Free(b)) => a != b,
-            _ => false,
-        }
-    }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum Prop {
     Trivial(bool),
     Not(Rc<Prop>),
@@ -44,192 +66,100 @@ pub enum Prop {
     Is(Term, Term),
 }
 
-// TODO: This could be replaced by a TermForest, also removing the need for prop equality checks.
-#[derive(Debug, Clone, Default)]
-pub struct Tableaux {
-    head: usize,
-    set: HashMap<Rc<Prop>, usize>,
-    props: Vec<Option<Rc<Prop>>>,
-    depth: u32,
-}
-
-impl Tableaux {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn save(&self) -> usize {
-        self.head
-    }
-
-    fn restore(&mut self, head: usize) {
-        self.head = head;
-    }
-
-    pub fn fork<F, R>(&mut self, mut fn_: F) -> R
-    where
-        F: FnMut(&mut Self) -> R,
-    {
-        let state = self.save();
-        println!("{}{{", tab(self.depth));
-        self.depth += 1;
-        let ret = fn_(self);
-        self.depth -= 1;
-        println!("{}}}", tab(self.depth));
-        self.restore(state);
-        ret
-    }
-
-    pub fn propose(&mut self, prop: Rc<Prop>) -> Result<(), ContradictionError> {
+impl Prop {
+    pub fn guaranteed_malformed(&self) -> bool {
         use Prop::*;
 
-        println!("{}{:?}", tab(self.depth), prop);
-
-        // Check if we have this proposition in duplicate
-        if self.contains(&prop) {
-            // That previous instance of this proposition didn't conflict with anything and
-            // contradictory propositions are never added to the table so this proposition won't
-            // contradict anything.
-            return Ok(());
-        }
-
-        // Check if the proposition conflicts with other propositions directly.
-        match &*prop {
-            Trivial(true) => { /* never conflicts with anything */ }
-            Trivial(false) => {
-                // Trivially false is always false, however.
-                return Err(ContradictionError);
-            }
-            Is(a, b) => {
-                if a.guaranteed_neq(b) {
-                    return Err(ContradictionError);
-                }
-
-                if self.contains(&not(prop.clone())) {
-                    return Err(ContradictionError);
-                }
-            }
-            Or(_, _) => {
-                if self.contains(&not(prop.clone())) {
-                    return Err(ContradictionError);
-                }
-            }
-            Not(negative) => match &**negative {
-                Trivial(true) => {
-                    // Trivially not true (i.e. false) is always false.
-                    return Err(ContradictionError);
-                }
-                Trivial(false) => { /* Trivially not false is always true. */ }
-                Is(a, b) => {
-                    if a == b {
-                        return Err(ContradictionError);
-                    }
-
-                    if self.contains(negative) {
-                        return Err(ContradictionError);
-                    }
-                }
-                Or(_, _) | Not(_) => {
-                    if self.contains(negative) {
-                        return Err(ContradictionError);
-                    }
-                }
+        match self {
+            Trivial(false) => true,
+            Is(Term::Concrete(a), Term::Concrete(b)) => a != b,
+            Not(prop) => match &**prop {
+                Trivial(true) => true,
+                Is(a, b) => a == b,
+                _ => false,
             },
-        }
-
-        //> Introduce the new proposition
-
-        // First, remove the previous proposition at this index so that it doesn't suddenly become
-        // included in the tableaux.
-        let slot = if let Some(slot) = self.props.get_mut(self.head) {
-            let removed = slot.take().unwrap();
-            self.set.remove(&removed);
-            slot
-        } else {
-            self.props.push(None);
-            &mut self.props[self.head]
-        };
-
-        // Update the list and the set
-        *slot = Some(prop.clone());
-        self.set.insert(prop, self.head);
-
-        // Finally, move the head
-        self.head += 1;
-
-        Ok(())
-    }
-
-    pub fn contains(&self, prop: &Rc<Prop>) -> bool {
-        match self.set.get(prop) {
-            Some(id) => *id < self.head,
-            None => false,
+            _ => false,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct ContradictionError;
+#[derive(Debug, Clone, Default)]
+pub struct TermTableaux {
+    sets: DisjointSet<Term>,
+    negatives: Vec<(usize, usize)>,
+}
 
-impl Error for ContradictionError {}
+impl TermTableaux {
+    pub fn new() -> Self {
+        Default::default()
+    }
 
-impl Display for ContradictionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "proposal caused a contradiction")
+    pub fn propose_pos(&mut self, left: Term, right: Term) {
+        let left_id = self.sets.push(left);
+        let right_id = self.sets.push(right);
+        self.sets.raw_mut().union(left_id, right_id);
+    }
+
+    pub fn propose_neg(&mut self, left: Term, right: Term) {
+        let left_id = self.sets.push(left);
+        let right_id = self.sets.push(right);
+        self.negatives.push((left_id, right_id));
+    }
+
+    pub fn validate(&mut self) -> bool {
+        for (left, right) in self.negatives.iter().copied() {
+            if self.sets.raw_mut().are_siblings(left, right) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
+// TODO: optimize forking; support recursive propositions; better justification paths
 pub fn evaluate_prop(prop: Rc<Prop>) -> bool {
     fn can_refute(
-        tableaux: &mut Tableaux,
+        mut tableaux: TermTableaux,
         initial_heads: Vec<Rc<Prop>>,
-        // TODO: Optimize terminals data structure
         mut terminals: Vec<Rc<Prop>>,
+        log_depth: u32,
     ) -> bool {
         use Prop::*;
 
         let mut dirty_heads = initial_heads;
-        let mut dirty_heads_next = Vec::new();
 
         // Expand non-terminals
-        // TODO: Expansion limits (prop checking is only semi-decidable)
-        while !dirty_heads.is_empty() {
-            for head in dirty_heads.drain(..) {
-                match &*head {
-                    Trivial(_) => { /* cannot be expanded */ }
-                    Not(neg) => match &**neg {
-                        Trivial(_) => { /* cannot be expanded */ }
-                        Not(next) => {
-                            // Handle double negation implication
-                            if tableaux.propose(next.clone()).is_err() {
-                                return true;
-                            }
-                            dirty_heads_next.push(next.clone());
-                        }
-                        Or(left, right) => {
-                            let (neg_left, neg_right) = (not(left.clone()), not(right.clone()));
+        while let Some(head) = dirty_heads.pop() {
+            log::trace!("{}{:?}", tab(log_depth), head);
 
-                            // Propose the negation of both operands
-                            if tableaux.propose(neg_left.clone()).is_err() {
-                                return true;
-                            }
-
-                            if tableaux.propose(neg_right.clone()).is_err() {
-                                return true;
-                            }
-
-                            dirty_heads_next.push(neg_left);
-                            dirty_heads_next.push(neg_right);
-                        }
-                        Is(_, _) => todo!(),
-                    },
-                    Or(_, _) => terminals.push(head),
-                    Is(_, _) => todo!(),
-                }
+            if head.guaranteed_malformed() {
+                // We found a contradiction
+                return true;
             }
 
-            // TODO: do we need double buffering?
-            swap(&mut dirty_heads, &mut dirty_heads_next);
+            match &*head {
+                Trivial(_) => { /* cannot be expanded */ }
+                Not(neg_head) => match &**neg_head {
+                    Trivial(_) => { /* cannot be expanded */ }
+                    Not(next) => {
+                        // Handle double negation implication
+                        dirty_heads.push(next.clone());
+                    }
+                    Or(left, right) => {
+                        let (neg_left, neg_right) = (not(left.clone()), not(right.clone()));
+                        dirty_heads.push(neg_left);
+                        dirty_heads.push(neg_right);
+                    }
+                    Is(left, right) => {
+                        tableaux.propose_neg(*left, *right);
+                    }
+                },
+                Or(_, _) => terminals.push(head),
+                Is(left, right) => {
+                    tableaux.propose_pos(*left, *right);
+                }
+            }
         }
 
         // Expand terminals
@@ -237,56 +167,32 @@ pub fn evaluate_prop(prop: Rc<Prop>) -> bool {
             match &*terminal {
                 Or(left, right) => {
                     // Assume left only case.
-                    if !tableaux.fork(|tableaux| {
-                        let neg_right = not(right.clone());
-
-                        if tableaux.propose(left.clone()).is_err() {
-                            return true;
-                        }
-
-                        if tableaux.propose(neg_right.clone()).is_err() {
-                            return true;
-                        }
-
-                        can_refute(tableaux, vec![left.clone(), neg_right], terminals.clone())
-                    }) {
+                    if !can_refute(
+                        tableaux.clone(),
+                        vec![left.clone(), not(right.clone())],
+                        terminals.clone(),
+                        log_depth + 1,
+                    ) {
                         return false;
                     }
 
                     // Assume right only case.
-                    if !tableaux.fork(|tableaux| {
-                        let neg_left = not(left.clone());
-
-                        if tableaux.propose(neg_left.clone()).is_err() {
-                            return true;
-                        }
-
-                        if tableaux.propose(right.clone()).is_err() {
-                            return true;
-                        }
-
-                        can_refute(tableaux, vec![neg_left, right.clone()], terminals.clone())
-                    }) {
+                    if !can_refute(
+                        tableaux.clone(),
+                        vec![not(left.clone()), right.clone()],
+                        terminals.clone(),
+                        log_depth + 1,
+                    ) {
                         return false;
                     }
 
                     // Assume both case.
-                    if !tableaux.fork(|tableaux| {
-                        if tableaux.propose(left.clone()).is_err() {
-                            return true;
-                        }
-
-                        if tableaux.propose(right.clone()).is_err() {
-                            return true;
-                        }
-
-                        can_refute(
-                            tableaux,
-                            vec![left.clone(), right.clone()],
-                            terminals.clone(),
-                        )
-                    }) {
-                        // We failed to refute this case.
+                    if !can_refute(
+                        tableaux.clone(),
+                        vec![left.clone(), right.clone()],
+                        terminals.clone(),
+                        log_depth + 1,
+                    ) {
                         return false;
                     }
                 }
@@ -297,16 +203,20 @@ pub fn evaluate_prop(prop: Rc<Prop>) -> bool {
             // satisfied.
             true
         } else {
+            // We've expanded all the possible propositions. Time to check if they're valid.
+            if !tableaux.validate() {
+                // We found a contradiction to refute this proposition.
+                return true;
+            }
+
             // No non-terminal props could be expanded to disprove this branch.
             // Thus, this proposition is irrefutable.
             false
         }
     }
 
-    let mut tableaux = Tableaux::new();
-    let prop = not(prop);
-    tableaux.propose(prop.clone()).unwrap();
-    can_refute(&mut tableaux, vec![prop], Vec::new())
+    log::trace!("Evaluating {:?}", prop);
+    can_refute(TermTableaux::new(), vec![not(prop)], Vec::new(), 1)
 }
 
 // === Rewrite constructors === //
@@ -357,5 +267,35 @@ pub fn iff(a: Rc<Prop>, b: Rc<Prop>) -> Rc<Prop> {
 
 #[test]
 fn basic_impl() {
-    dbg!(evaluate_prop(iff(iff(bot(), bot()), nand(bot(), taut()))));
+    env_logger::init();
+
+    let a = Term::new_free();
+    let b = Term::new_free();
+    let c = Term::new_free();
+
+    assert_eq!(true, evaluate_prop(or(taut(), bot())));
+    assert_eq!(false, evaluate_prop(and(taut(), bot())));
+    assert_eq!(true, evaluate_prop(iff(is(a, b), is(b, a))));
+    assert_eq!(
+        true,
+        evaluate_prop(implies(and(is(a, b), is(b, c)), is(a, c)))
+    );
+    assert_eq!(false, evaluate_prop(iff(and(is(a, b), is(b, c)), is(a, c))));
+
+    // This fails because not all choices of a, b, and c will result in this equivalence relationship.
+    assert_eq!(
+        false,
+        evaluate_prop(implies(and(not(is(a, b)), not(is(b, c))), not(is(a, c)))),
+    );
+
+    // This fails because not all choices of a, b, and c will result in this non-equivalence relationship.
+    // Because of the way in which propositions are qualified, the negation of a tautological proposition
+    // is not always unsatisfiable and vice-versa.
+    assert_eq!(
+        false,
+        evaluate_prop(not(implies(
+            and(not(is(a, b)), not(is(b, c))),
+            not(is(a, c))
+        ))),
+    );
 }

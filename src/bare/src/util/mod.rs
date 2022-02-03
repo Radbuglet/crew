@@ -1,5 +1,6 @@
 pub mod alloc;
 pub mod backing;
+pub mod disjoint_set;
 pub mod enum_utils;
 pub mod fmt;
 pub mod folder;
