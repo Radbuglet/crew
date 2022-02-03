@@ -1,6 +1,6 @@
 use crate::syntax::parse::path::AstPathDirect;
-use crate::syntax::parse::util::{util_match_group, util_match_punct};
-use crate::syntax::token::{PunctChar, TokenGroup, TokenStreamReader};
+use crate::syntax::parse::util::{util_match_group, util_match_punct, ParserCx};
+use crate::syntax::token::{PunctChar, TokenGroup};
 use crate::util::reader::LookaheadReader;
 
 #[derive(Debug, Clone)]
@@ -10,7 +10,7 @@ pub struct AstAnyAttrMacro {
 }
 
 impl AstAnyAttrMacro {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<(bool, Self)> {
+    pub fn parse((cx, reader): ParserCx) -> Option<(bool, Self)> {
         reader.lookahead(|reader| {
             // Match @ symbol
             util_match_punct(reader, PunctChar::At, None)?;
@@ -19,7 +19,7 @@ impl AstAnyAttrMacro {
             let is_inner = util_match_punct(reader, PunctChar::Exclamation, None).is_some();
 
             // Match path to target attribute
-            let path = AstPathDirect::parse(reader)?;
+            let path = AstPathDirect::parse((cx, reader))?;
 
             // Match optional opaque token group passed directly to the macro.
             let arg = util_match_group(reader).map(Clone::clone);
@@ -28,15 +28,15 @@ impl AstAnyAttrMacro {
         })
     }
 
-    pub fn parse_inner(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| match Self::parse(reader) {
+    pub fn parse_inner((cx, reader): ParserCx) -> Option<Self> {
+        reader.lookahead(|reader| match Self::parse((cx, reader)) {
             Some((true, attr)) => Some(attr),
             _ => None,
         })
     }
 
-    pub fn parse_outer(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| match Self::parse(reader) {
+    pub fn parse_outer((cx, reader): ParserCx) -> Option<Self> {
+        reader.lookahead(|reader| match Self::parse((cx, reader)) {
             Some((false, attr)) => Some(attr),
             _ => None,
         })
@@ -49,9 +49,9 @@ pub struct AstAttrQualifier {
 }
 
 impl AstAttrQualifier {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         Some(Self {
-            attr: AstAnyAttrMacro::parse_outer(reader)?,
+            attr: AstAnyAttrMacro::parse_outer((cx, reader))?,
         })
     }
 }

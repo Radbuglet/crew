@@ -12,6 +12,8 @@
 #![feature(str_internals)]
 #![feature(unsize)]
 
+use crate::syntax::parse::util::ParserBundle;
+
 pub mod semantic;
 pub mod syntax;
 pub mod util;
@@ -38,7 +40,15 @@ fn main() -> Result<(), ()> {
     println!("Tokenized source: {}", tokens);
 
     // Parse AST
-    let parsed = AstModule::parse(&mut tokens.reader());
+    let parsed = {
+        let mut cx = ParserBundle {
+            diag: Diagnostics::new(),
+        };
+        let parsed = AstModule::parse((&mut cx, &mut tokens.reader()));
+        cx.diag.temp_display();
+        parsed.ok_or(())?
+    };
+
     println!("Parsed source: {:#?}", parsed);
     Ok(())
 }

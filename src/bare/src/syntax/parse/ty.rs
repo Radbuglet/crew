@@ -1,9 +1,9 @@
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
-    util_punct_matcher,
+    util_punct_matcher, ParserCx,
 };
-use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
+use crate::syntax::token::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
 use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
 
@@ -12,15 +12,17 @@ enum_categories! {
     pub enum AstType {
         Obj(AstTypeObj),
         Tup(AstTypeTuple),
+        Never(AstTypeNever),
     }
 }
 
 impl AstType {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         match_choice!(
             reader,
-            |reader| Some(AstTypeObj::parse(reader)?.wrap()),
-            |reader| Some(AstTypeTuple::parse(reader)?.wrap()),
+            |reader| Some(AstTypeObj::parse((cx, reader))?.wrap()),
+            |reader| Some(AstTypeTuple::parse((cx, reader))?.wrap()),
+            |reader| Some(AstTypeNever::parse((cx, reader))?.wrap()),
         )
     }
 }
@@ -32,10 +34,10 @@ pub struct AstTypeObj {
 }
 
 impl AstTypeObj {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
-            let path = AstPathDirect::parse(reader)?;
-            let generics = AstTypeObjGenerics::parse(reader)?;
+            let path = AstPathDirect::parse((cx, reader))?;
+            let generics = AstTypeObjGenerics::parse((cx, reader))?;
 
             Some(Self { path, generics })
         })
@@ -54,7 +56,7 @@ pub enum GenericParamKind {
 }
 
 impl AstTypeObjGenerics {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Option<Self>> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Option<Self>> {
         reader.lookahead(|reader| {
             // Match '<'
             if util_match_punct(reader, PunctChar::Less, None).is_some() {
@@ -65,7 +67,7 @@ impl AstTypeObjGenerics {
                 let params = reader
                     .consume_while(|reader| {
                         delimited.next(reader)?;
-                        Self::parse_param(reader)
+                        Self::parse_param((cx, reader))
                     })
                     .collect();
 
@@ -80,7 +82,7 @@ impl AstTypeObjGenerics {
         })
     }
 
-    pub fn parse_param(reader: &mut TokenStreamReader) -> Option<GenericParamKind> {
+    pub fn parse_param((cx, reader): ParserCx) -> Option<GenericParamKind> {
         // N.B. we match named in a higher priority group than unnamed because the unnamed grammar
         // is a partial subset of named but not vice-versa.
         match_choice!(
@@ -94,12 +96,12 @@ impl AstTypeObjGenerics {
                 util_match_punct(reader, PunctChar::Equals, None)?;
 
                 // Match param type
-                let ty = AstType::parse(reader)?;
+                let ty = AstType::parse((cx, reader))?;
 
                 Some(GenericParamKind::Named(name.text(), ty))
             }],
             // Match unnamed
-            [|reader| { Some(GenericParamKind::Unnamed(AstType::parse(reader)?)) }],
+            [|reader| { Some(GenericParamKind::Unnamed(AstType::parse((cx, reader))?)) }],
         )
     }
 }
@@ -110,7 +112,7 @@ pub struct AstTypeTuple {
 }
 
 impl AstTypeTuple {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             let paren = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
             let mut reader = paren.reader();
@@ -120,7 +122,7 @@ impl AstTypeTuple {
             let types = reader
                 .consume_while(|reader| {
                     delimited.next(reader)?;
-                    AstType::parse(reader)
+                    AstType::parse((cx, reader))
                 })
                 .collect();
 
@@ -128,6 +130,18 @@ impl AstTypeTuple {
             util_match_eof(&mut reader)?;
 
             Some(Self { types })
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstTypeNever;
+
+impl AstTypeNever {
+    pub fn parse((_cx, reader): ParserCx) -> Option<Self> {
+        reader.lookahead(|reader| {
+            util_match_punct(reader, PunctChar::Exclamation, None)?;
+            Some(AstTypeNever)
         })
     }
 }

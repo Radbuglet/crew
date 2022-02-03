@@ -1,11 +1,10 @@
-use crate::syntax::parse::class::AstClassItem;
 use crate::syntax::parse::macros::{AstAnyAttrMacro, AstAttrQualifier};
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
-    util_match_specific_kw, AstKeyword,
+    util_match_specific_kw, AstKeyword, ParserCx,
 };
-use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
+use crate::syntax::token::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
 use crate::util::reader::{match_choice, LookaheadReader};
 
@@ -16,20 +15,24 @@ pub struct AstModule {
 }
 
 impl AstModule {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         // Match inner attributes
-        let inner_attrs = reader.consume_while(AstAnyAttrMacro::parse_inner).collect();
+        let inner_attrs = reader
+            .consume_while(|reader| AstAnyAttrMacro::parse_inner((cx, reader)))
+            .collect();
 
         // Match parts
-        let parts = Self::parse_parts(reader)?;
+        let parts = Self::parse_parts((cx, reader))?;
 
         Some(Self { inner_attrs, parts })
     }
 
-    pub fn parse_parts(reader: &mut TokenStreamReader) -> Option<Vec<AstModItem>> {
+    pub fn parse_parts((cx, reader): ParserCx) -> Option<Vec<AstModItem>> {
         reader.lookahead(|reader| {
             // Collect parts
-            let parts = reader.consume_while(AstModItem::parse).collect();
+            let parts = reader
+                .consume_while(|reader| AstModItem::parse((cx, reader)))
+                .collect();
 
             // Expect EOF
             util_match_eof(reader)?;
@@ -46,12 +49,14 @@ pub struct AstModItem {
 }
 
 impl AstModItem {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         // Collect qualifiers
-        let qualifiers = reader.consume_while(AstModQualifier::parse).collect();
+        let qualifiers = reader
+            .consume_while(|reader| AstModQualifier::parse((cx, reader)))
+            .collect();
 
         // Collect item
-        let kind = AstModItemKind::parse(reader)?;
+        let kind = AstModItemKind::parse((cx, reader))?;
 
         Some(AstModItem { qualifiers, kind })
     }
@@ -65,19 +70,16 @@ enum_categories! {
         Mod(AstModModule),
         Block(AstModBlock),
         Use(AstModUse),
-        Class(AstModClass),
-        // TODO: Functions and stuff
     }
 }
 
 impl AstModItemKind {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         match_choice!(
             reader,
-            |reader| Some(AstModModule::parse(reader)?.wrap()),
-            |reader| Some(AstModBlock::parse(reader)?.wrap()),
-            |reader| Some(AstModUse::parse(reader)?.wrap()),
-            |reader| Some(AstModClass::parse(reader)?.wrap()),
+            |reader| Some(AstModModule::parse((cx, reader))?.wrap()),
+            |reader| Some(AstModBlock::parse((cx, reader))?.wrap()),
+            |reader| Some(AstModUse::parse((cx, reader))?.wrap()),
         )
     }
 }
@@ -89,7 +91,7 @@ pub struct AstModModule {
 }
 
 impl AstModModule {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match mod keyword
             util_match_specific_kw(reader, AstKeyword::Mod)?;
@@ -99,7 +101,7 @@ impl AstModModule {
 
             // Match inline contents
             let inline = match util_match_group_delimited(reader, GroupDelimiter::Brace) {
-                Some(brace) => Some(AstModule::parse(&mut brace.reader())?),
+                Some(brace) => Some(AstModule::parse((cx, &mut brace.reader()))?),
                 None => None,
             };
 
@@ -122,10 +124,10 @@ pub struct AstModBlock {
 }
 
 impl AstModBlock {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
-            let parts = AstModule::parse_parts(&mut group.reader())?;
+            let parts = AstModule::parse_parts((cx, &mut group.reader()))?;
 
             Some(Self { parts })
         })
@@ -138,40 +140,18 @@ pub struct AstModUse {
 }
 
 impl AstModUse {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "use"
             util_match_specific_kw(reader, AstKeyword::Use)?;
 
             // Match tree
-            let path = AstPathTree::parse(reader)?;
+            let path = AstPathTree::parse((cx, reader))?;
 
             // Match semicolon
             util_match_punct(reader, PunctChar::Semicolon, None)?;
 
             Some(Self { path })
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AstModClass {
-    name: String,
-    items: Vec<AstClassItem>,
-}
-
-impl AstModClass {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
-        reader.lookahead(|reader| {
-            util_match_specific_kw(reader, AstKeyword::Class)?;
-            let name = util_match_ident(reader)?;
-            let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
-            let items = AstClassItem::parse_group_inner(&mut group.reader())?;
-
-            Some(Self {
-                name: name.text(),
-                items,
-            })
         })
     }
 }
@@ -187,11 +167,11 @@ enum_categories! {
 }
 
 impl AstModQualifier {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         match_choice!(
             reader,
-            |reader| Some(AstVisQualifier::parse(reader)?.wrap()),
-            |reader| Some(AstAttrQualifier::parse(reader)?.wrap())
+            |reader| Some(AstVisQualifier::parse((cx, reader))?.wrap()),
+            |reader| Some(AstAttrQualifier::parse((cx, reader))?.wrap())
         )
     }
 }

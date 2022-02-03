@@ -1,3 +1,7 @@
+//! Utilities used throughout the parser. Many fundamental objects are included here rather than in
+//! the `parse` module to avoid leaking imports to descendant modules.
+
+use crate::syntax::diagnostic::Diagnostics;
 use crate::syntax::span::Span;
 use crate::syntax::token::{
     GroupDelimiter, PunctChar, Token, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
@@ -6,6 +10,15 @@ use crate::syntax::token::{
 use crate::util::enum_utils::*;
 use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::{Debug, Display, Formatter};
+
+// === Parser context === //
+
+pub type ParserCx<'r, 'a> = (&'r mut ParserBundle, &'r mut TokenStreamReader<'a>);
+
+#[derive(Debug, Clone)]
+pub struct ParserBundle {
+    pub diag: Diagnostics,
+}
 
 // === Primitive token matching === //
 

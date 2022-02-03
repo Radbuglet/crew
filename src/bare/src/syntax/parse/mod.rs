@@ -7,9 +7,6 @@
 //!
 //! The entrypoint for this module is the [module::AstModule::parse] method.
 
-pub mod class;
-pub mod class_expr;
-pub mod expr;
 pub mod macros;
 pub mod module;
 pub mod path;

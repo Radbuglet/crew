@@ -1,9 +1,9 @@
 use crate::syntax::parse::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_ident_or_kw,
     util_match_punct, util_match_specific_kw, util_match_turbo, util_punct_matcher, AstKeyword,
-    IdentOrKw,
+    IdentOrKw, ParserCx,
 };
-use crate::syntax::token::{GroupDelimiter, PunctChar, TokenStreamReader};
+use crate::syntax::token::{GroupDelimiter, PunctChar};
 use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, RepFlow};
 
 // === Shared === //
@@ -17,7 +17,7 @@ pub enum AstPathRoot {
 }
 
 impl AstPathRoot {
-    pub fn parse(reader: &mut TokenStreamReader) -> Self {
+    pub fn parse((_cx, reader): ParserCx) -> Self {
         match_choice!(
             reader,
             // Absolute
@@ -47,7 +47,7 @@ pub enum AstPathPart {
 }
 
 impl AstPathPart {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((_cx, reader): ParserCx) -> Option<Self> {
         match_choice!(
             reader,
             // Match super literal
@@ -84,10 +84,10 @@ pub struct AstPathDirect {
 }
 
 impl AstPathDirect {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match root
-            let root = AstPathRoot::parse(reader);
+            let root = AstPathRoot::parse((cx, reader));
 
             // Match subsequent parts
             let mut delimited = DelimiterMatcher::new(util_match_turbo, root.expects_turbo());
@@ -97,7 +97,7 @@ impl AstPathDirect {
                     delimited.next(reader)?;
 
                     // Push path part
-                    AstPathPart::parse(reader)
+                    AstPathPart::parse((cx, reader))
                 })
                 .collect::<Vec<_>>();
 
@@ -129,16 +129,16 @@ pub struct AstPathTree {
 }
 
 impl AstPathTree {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
-            let root = AstPathRoot::parse(reader);
-            let node = AstPathNode::parse(reader, root.expects_turbo())?;
+            let root = AstPathRoot::parse((cx, reader));
+            let node = AstPathNode::parse((cx, reader), root.expects_turbo())?;
 
             Some(Self { root, node })
         })
     }
 
-    pub fn parse_path_parens(reader: &mut TokenStreamReader) -> Option<Vec<AstPathTree>> {
+    pub fn parse_path_parens((cx, reader): ParserCx) -> Option<Vec<AstPathTree>> {
         reader.lookahead(|reader| {
             if let Some(paren) = util_match_group_delimited(reader, GroupDelimiter::Paren) {
                 let mut delimited =
@@ -150,7 +150,7 @@ impl AstPathTree {
                     .reader()
                     .consume_while(|reader| {
                         delimited.next(reader)?;
-                        AstPathTree::parse(reader)
+                        AstPathTree::parse((cx, reader))
                     })
                     .collect();
 
@@ -172,7 +172,7 @@ pub struct AstPathNode {
 }
 
 impl AstPathNode {
-    pub fn parse(reader: &mut TokenStreamReader, expects_leading_turbo: bool) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx, expects_leading_turbo: bool) -> Option<Self> {
         let mut parts = Vec::new();
         let mut terminator = AstPathTerminator::Finish;
         let mut delimited = DelimiterMatcher::new(util_match_turbo, expects_leading_turbo);
@@ -191,8 +191,8 @@ impl AstPathNode {
 
             match match_choice!(
                 reader,
-                |reader| Some(Matched::Terminator(AstPathTerminator::parse(reader)?)),
-                |reader| Some(Matched::Part(AstPathPart::parse(reader)?)),
+                |reader| Some(Matched::Terminator(AstPathTerminator::parse((cx, reader))?)),
+                |reader| Some(Matched::Part(AstPathPart::parse((cx, reader))?)),
             ) {
                 Some(Matched::Terminator(matched)) => {
                     terminator = matched;
@@ -219,7 +219,7 @@ pub enum AstPathTerminator {
 }
 
 impl AstPathTerminator {
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         match_choice!(
             reader,
             // Rename
@@ -245,7 +245,7 @@ impl AstPathTerminator {
 
                 while let Some(_) = delimited.next(&mut reader) {
                     // The node is optional (e.g. for trailing commas)
-                    if let Some(node) = AstPathNode::parse(&mut reader, false) {
+                    if let Some(node) = AstPathNode::parse((cx, &mut reader), false) {
                         nodes.push(node);
                     }
                 }
@@ -276,13 +276,13 @@ pub struct AstVisQualifier {
 
 impl AstVisQualifier {
     //noinspection DuplicatedCode
-    pub fn parse(reader: &mut TokenStreamReader) -> Option<Self> {
+    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "pub"
             util_match_specific_kw(reader, AstKeyword::Pub)?;
 
             // Match optional path list
-            let visible_to = AstPathTree::parse_path_parens(reader)?;
+            let visible_to = AstPathTree::parse_path_parens((cx, reader))?;
 
             // Construct
             Some(Self { visible_to })
