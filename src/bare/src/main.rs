@@ -10,6 +10,7 @@
 #![feature(maybe_uninit_uninit_array)]
 #![feature(never_type)]
 #![feature(str_internals)]
+#![feature(try_trait_v2)]
 #![feature(unsize)]
 
 use crate::syntax::parse::util::ParserBundle;

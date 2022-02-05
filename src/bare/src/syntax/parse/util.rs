@@ -124,16 +124,14 @@ impl TokenLitSeq<'_> {
 
 // === Diagnostics === //
 
-pub fn util_next_token_span(reader: &mut TokenStreamReader) -> Span {
+pub fn util_next_token_span(reader: &TokenStreamReader) -> Span {
     match reader.peek() {
         Some(token) => token.full_span(),
         None => reader.next_loc().char_span(),
     }
 }
 
-pub fn util_stringify_next_token<'a>(
-    reader: &'a mut TokenStreamReader,
-) -> FmtTokenEncounterName<'a> {
+pub fn util_stringify_next_token<'a>(reader: &TokenStreamReader<'a>) -> FmtTokenEncounterName<'a> {
     util_get_token_encounter_name(reader.peek())
 }
 
@@ -290,6 +288,12 @@ enum_meta! {
         Yield = "yield",
         Override = "override",
         Readonly = "readonly",
+    }
+}
+
+impl Display for AstKeyword {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.meta())
     }
 }
 

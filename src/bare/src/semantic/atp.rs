@@ -32,6 +32,7 @@
 
 use crate::util::disjoint_set::DisjointSet;
 use crate::util::fmt::tab;
+use std::fmt::Debug;
 use std::rc::Rc;
 
 // === Core === //
@@ -166,30 +167,20 @@ pub fn evaluate_prop(prop: Rc<Prop>) -> bool {
         if let Some(terminal) = terminals.pop() {
             match &*terminal {
                 Or(left, right) => {
-                    // Assume left only case.
+                    // Assume left case.
                     if !can_refute(
                         tableaux.clone(),
-                        vec![left.clone(), not(right.clone())],
+                        vec![left.clone()],
                         terminals.clone(),
                         log_depth + 1,
                     ) {
                         return false;
                     }
 
-                    // Assume right only case.
+                    // Assume right case.
                     if !can_refute(
                         tableaux.clone(),
-                        vec![not(left.clone()), right.clone()],
-                        terminals.clone(),
-                        log_depth + 1,
-                    ) {
-                        return false;
-                    }
-
-                    // Assume both case.
-                    if !can_refute(
-                        tableaux.clone(),
-                        vec![left.clone(), right.clone()],
+                        vec![right.clone()],
                         terminals.clone(),
                         log_depth + 1,
                     ) {

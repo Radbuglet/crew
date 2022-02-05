@@ -1,4 +1,6 @@
+use std::iter::FromIterator;
 use std::mem::MaybeUninit;
+use std::ops::{ControlFlow, FromResidual, Try};
 
 // === TakeAt === //
 
@@ -84,71 +86,50 @@ impl<I: Iterator> ArrayCollectExt for I {}
 
 // === TryCollect === //
 
-pub trait CollectableResult {
-    type Value;
-    type Error;
-
-    fn to_result(self) -> Result<Self::Value, Self::Error>;
-}
-
-impl<T> CollectableResult for Option<T> {
-    type Value = T;
-    type Error = ();
-
-    fn to_result(self) -> Result<Self::Value, Self::Error> {
-        match self {
-            Some(ok) => Ok(ok),
-            None => Err(()),
-        }
-    }
-}
-
-impl<T, E> CollectableResult for Result<T, E> {
-    type Value = T;
-    type Error = E;
-
-    fn to_result(self) -> Result<Self::Value, Self::Error> {
-        self
-    }
-}
-
-pub trait TryCollectExt: Sized + Iterator {
-    type Value;
-    type Error;
-
-    fn try_collect<C: FromIterator<Self::Value>>(self) -> Result<C, Self::Error>;
-}
-
-impl<E: CollectableResult, I: Iterator<Item = E>> TryCollectExt for I {
-    type Value = E::Value;
-    type Error = E::Error;
-
-    fn try_collect<C: FromIterator<Self::Value>>(mut self) -> Result<C, Self::Error> {
+pub trait TryCollectExt: Sized + Iterator
+where
+    Self::Item: Try,
+{
+    fn try_collect<R>(mut self) -> R
+    where
+        R: Try,
+        R::Output: FromIterator<<Self::Item as Try>::Output>,
+        R: FromResidual<<Self::Item as Try>::Residual>,
+    {
         // Collect all "Ok" elements.
-        let mut iter_error = None;
+        let mut error_residual = None;
         let ok_iter = std::iter::from_fn(|| {
-            // Ensure that users don't consume more than one error.
-            if iter_error.is_some() {
+            // Ensure that users don't suddenly start getting success values after
+            // an error has been encountered.
+            if error_residual.is_some() {
                 return None;
             }
 
             // Transform errors into "None" and flag them.
-            match self.next()?.to_result() {
-                Ok(elem) => Some(elem),
-                Err(error) => {
-                    iter_error = Some(error);
+            match self.next()?.branch() {
+                ControlFlow::Continue(value) => Some(value),
+                ControlFlow::Break(residual) => {
+                    error_residual = Some(residual);
                     None
                 }
             }
         });
-        let collection = ok_iter.collect::<C>();
+
+        let collection = ok_iter.collect::<R::Output>();
 
         // Check if there are any trailing non-ok elements.
-        match iter_error {
-            Some(err) => Err(err),
-            None => Ok(collection),
+        match error_residual {
+            Some(err) => R::from_residual(err),
+            None => R::from_output(collection),
         }
     }
+}
+
+impl<T> TryCollectExt for T
+where
+    T: Sized + Iterator,
+    T::Item: Try,
+{
 }
 
 // === "Tests" === //

@@ -11,7 +11,7 @@ use crate::util::reader::{match_choice, LookaheadReader};
 #[derive(Debug, Clone)]
 pub struct AstModule {
     pub inner_attrs: Vec<AstAnyAttrMacro>,
-    pub parts: Vec<AstModItem>,
+    pub items: Vec<AstModItem>,
 }
 
 impl AstModule {
@@ -24,7 +24,10 @@ impl AstModule {
         // Match parts
         let parts = Self::parse_parts((cx, reader))?;
 
-        Some(Self { inner_attrs, parts })
+        Some(Self {
+            inner_attrs,
+            items: parts,
+        })
     }
 
     pub fn parse_parts((cx, reader): ParserCx) -> Option<Vec<AstModItem>> {

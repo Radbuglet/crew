@@ -9,7 +9,7 @@
 //! syntactical elements. Second, it abstracts over the complexities of Unicode by providing atomic
 //! abstractions (e.g. idents, puncts, strings, comments) over them.
 //!
-//! In addition to the benefits of its IR, the tokenizer also handles:
+//! In addition to the benefits of its IR, the tokenizer also provides:
 //!
 //! - Early interning of identifiers and literals
 //! - Unbalanced group recovery

@@ -1,4 +1,105 @@
+// TODO: Make error handling less confusing...
+
 use std::marker::PhantomData;
+
+// === PResults === //
+
+pub type PResult<T, E> = Result<Option<T>, E>;
+pub type BarePResult<T> = PResult<T, ()>;
+
+pub trait PResultOptionExt {
+    type Value;
+
+    fn ok_or_unmatched<E>(self) -> PResult<Self::Value, E>;
+
+    fn ok_or_with_error<F, E>(self, on_missing: F) -> PResult<Self::Value, E>
+    where
+        F: FnMut() -> E;
+
+    fn ok_or_error<E>(self, err: E) -> PResult<Self::Value, E>;
+
+    fn ok_or_default_error<E: Default>(self) -> PResult<Self::Value, E>;
+}
+
+impl<T> PResultOptionExt for Option<T> {
+    type Value = T;
+
+    fn ok_or_unmatched<E>(self) -> PResult<Self::Value, E> {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Ok(None),
+        }
+    }
+
+    fn ok_or_with_error<F, E>(self, mut on_missing: F) -> PResult<Self::Value, E>
+    where
+        F: FnMut() -> E,
+    {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Err(on_missing()),
+        }
+    }
+
+    fn ok_or_error<E>(self, err: E) -> PResult<Self::Value, E> {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Err(err),
+        }
+    }
+
+    fn ok_or_default_error<E: Default>(self) -> PResult<Self::Value, E> {
+        self.ok_or_with_error(Default::default)
+    }
+}
+
+pub trait PResultExt {
+    type Success;
+    type Error;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>>;
+
+    fn expect_with<F>(self, on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error;
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error>;
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default;
+}
+
+impl<T, E> PResultExt for PResult<T, E> {
+    type Success = T;
+    type Error = E;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>> {
+        match self {
+            Ok(Some(present)) => Some(Ok(present)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
+    }
+
+    fn expect_with<F>(self, mut on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error,
+    {
+        self.invert().unwrap_or_else(|| Err(on_missing()))
+    }
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error> {
+        self.invert().unwrap_or(Err(on_missing))
+    }
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default,
+    {
+        self.expect_with(Default::default)
+    }
+}
 
 // === Lookahead machinery === //
 
@@ -187,9 +288,6 @@ impl<T> LookaheadResult for Option<T> {
     }
 }
 
-pub type PResult<T, E> = Result<Option<T>, E>;
-pub type BarePResult<T> = PResult<T, ()>;
-
 impl<T, E> LookaheadResult for PResult<T, E> {
     type LookaheadRes = Self;
 
@@ -203,54 +301,6 @@ impl<T, E> LookaheadResult for PResult<T, E> {
 
     fn into_result(self) -> Self {
         self
-    }
-}
-
-pub trait PResultExt {
-    type Success;
-    type Error;
-
-    fn invert(self) -> Option<Result<Self::Success, Self::Error>>;
-
-    fn expect_with<F>(self, on_missing: F) -> Result<Self::Success, Self::Error>
-    where
-        F: FnMut() -> Self::Error;
-
-    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error>;
-
-    fn expect_default(self) -> Result<Self::Success, Self::Error>
-    where
-        Self::Error: Default;
-}
-
-impl<T, E> PResultExt for PResult<T, E> {
-    type Success = T;
-    type Error = E;
-
-    fn invert(self) -> Option<Result<Self::Success, Self::Error>> {
-        match self {
-            Ok(Some(present)) => Some(Ok(present)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
-    }
-
-    fn expect_with<F>(self, mut on_missing: F) -> Result<Self::Success, Self::Error>
-    where
-        F: FnMut() -> Self::Error,
-    {
-        self.invert().unwrap_or_else(|| Err(on_missing()))
-    }
-
-    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error> {
-        self.invert().unwrap_or(Err(on_missing))
-    }
-
-    fn expect_default(self) -> Result<Self::Success, Self::Error>
-    where
-        Self::Error: Default,
-    {
-        self.expect_with(Default::default)
     }
 }
 
@@ -286,6 +336,18 @@ impl<T> RepeatResult for Option<T> {
 
     fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
         self.map(|value| (true, value))
+    }
+}
+
+impl<T, E> RepeatResult for PResult<T, E> {
+    type RepeatRes = Result<T, E>;
+
+    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
+        match self {
+            Ok(Some(val)) => Some((true, Ok(val))),
+            Ok(None) => None,
+            Err(err) => Some((false, Err(err))),
+        }
     }
 }
 
@@ -472,6 +534,7 @@ pub macro match_choice {
             $(|$binding:ident| $expr:expr),*$(,)?
         ]),*$(,)?
     ) => {
+        // This loop allows us to short-circuit early if one of the inner groups succeeds.
         loop {
             let reader = $reader;
 
@@ -480,19 +543,20 @@ pub macro match_choice {
 
                 $({
                     let mut fork = Clone::clone(reader);
-                    if let Some(res) = helper_call_closure(|$binding| $expr, &mut fork) {
+                    let fork_res = helper_call_closure(|$binding| $expr, &mut fork);
+                    if LookaheadResult::should_commit(&fork_res) {
                         debug_assert!(result.is_none(), "Ambiguous pattern!");
-                        result = Some((fork, res));
+                        result = Some((fork, fork_res));
                     }
                 })*
 
                 if let Some((fork, result)) = result {
                     *reader = fork;
-                    break Some(result);
+                    break result;
                 }
             })*
 
-            break None;
+            break Default::default();
         }
     }
 }
