@@ -18,11 +18,11 @@ pub mod syntax;
 pub mod util;
 
 fn main() -> Result<(), ()> {
+    use crate::syntax::ast::module::AstModule;
+    use crate::syntax::ast::util::AstCxBundle;
     use crate::syntax::diagnostic::Diagnostics;
-    use crate::syntax::parse::module::AstModule;
-    use crate::syntax::parse::util::AstBundle;
     use crate::syntax::span::SourceFile;
-    use crate::syntax::token::tokenize_file;
+    use crate::syntax::token::tokenize::tokenize_file;
     use std::path::PathBuf;
 
     // Initialize logger
@@ -41,7 +41,7 @@ fn main() -> Result<(), ()> {
 
     // Parse AST
     let parsed = {
-        let mut cx = AstBundle {
+        let mut cx = AstCxBundle {
             diag: Diagnostics::new(),
         };
         let parsed = AstModule::parse((&mut cx, &mut tokens.reader()));

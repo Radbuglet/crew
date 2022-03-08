@@ -3,8 +3,8 @@
 
 use crate::syntax::diagnostic::Diagnostics;
 use crate::syntax::span::Span;
-use crate::syntax::token::{
-    GroupDelimiter, PunctChar, Token, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
+use crate::syntax::token::ir::{
+    GroupDelimiter, PunctChar, TokenGroup, TokenIdent, TokenNumberLit, TokenPunct,
     TokenStreamReader, TokenStringLit,
 };
 use crate::util::enum_utils::*;
@@ -13,10 +13,10 @@ use std::fmt::{Debug, Display, Formatter};
 
 // === Parser context === //
 
-pub type AstCx<'r, 'a> = (&'r mut AstBundle, &'r mut TokenStreamReader<'a>);
+pub type AstCx<'r, 'a> = (&'r mut AstCxBundle, &'r mut TokenStreamReader<'a>);
 
 #[derive(Debug, Clone)]
-pub struct AstBundle {
+pub struct AstCxBundle {
     pub diag: Diagnostics,
 }
 
@@ -118,43 +118,6 @@ impl TokenLitSeq<'_> {
         match self {
             TokenLitSeq::Punct(seq) => util_match_punct_seq(reader, seq),
             TokenLitSeq::Kw(kw) => util_match_specific_kw(reader, kw).cloned(),
-        }
-    }
-}
-
-// === Diagnostics === //
-
-pub fn util_next_token_span(reader: &TokenStreamReader) -> Span {
-    match reader.peek() {
-        Some(token) => token.full_span(),
-        None => reader.next_loc().char_span(),
-    }
-}
-
-pub fn util_stringify_next_token<'a>(reader: &TokenStreamReader<'a>) -> FmtTokenEncounterName<'a> {
-    util_get_token_encounter_name(reader.peek())
-}
-
-pub fn util_get_token_encounter_name(token: Option<&Token>) -> FmtTokenEncounterName<'_> {
-    FmtTokenEncounterName { token }
-}
-
-pub struct FmtTokenEncounterName<'a> {
-    token: Option<&'a Token>,
-}
-
-impl Display for FmtTokenEncounterName<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.token {
-            Some(Token::Group(group)) => f.write_str(group.delimiter.meta().encounter_name),
-            Some(Token::Ident(ident)) => match util_decode_keyword(ident.text.as_str()) {
-                Some(kw) => Display::fmt(&format_args!("{} keyword", kw.meta()), f),
-                None => Display::fmt(&format_args!("identifier \"{}\"", ident.text), f),
-            },
-            Some(Token::Punct(punct)) => punct.char.fmt(f),
-            Some(Token::StringLit(_)) => Display::fmt("string literal", f),
-            Some(Token::NumberLit(_)) => Display::fmt("number literal", f),
-            None => Display::fmt("end of group", f),
         }
     }
 }

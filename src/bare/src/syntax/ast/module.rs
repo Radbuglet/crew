@@ -1,10 +1,10 @@
-use crate::syntax::parse::macros::{AstAnyAttrMacro, AstAttrQualifier};
-use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
-use crate::syntax::parse::util::{
+use crate::syntax::ast::macros::{AstAnyAttrMacro, AstAttrQualifier};
+use crate::syntax::ast::path::{AstPathTree, AstVisQualifier};
+use crate::syntax::ast::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
     util_match_specific_kw, AstCx, AstKeyword,
 };
-use crate::syntax::token::{GroupDelimiter, PunctChar};
+use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
 use crate::util::reader::{match_choice, LookaheadReader};
 

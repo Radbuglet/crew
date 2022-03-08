@@ -1,9 +1,9 @@
-use crate::syntax::parse::util::{
+use crate::syntax::ast::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_ident_or_kw,
     util_match_punct, util_match_specific_kw, util_match_turbo, util_punct_matcher, AstCx,
     AstKeyword, IdentOrKw,
 };
-use crate::syntax::token::{GroupDelimiter, PunctChar};
+use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
 use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, RepFlow};
 
 // === Shared === //

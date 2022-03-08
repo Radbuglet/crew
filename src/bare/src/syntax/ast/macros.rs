@@ -1,6 +1,6 @@
-use crate::syntax::parse::path::AstPathDirect;
-use crate::syntax::parse::util::{util_match_group, util_match_punct, AstCx};
-use crate::syntax::token::{PunctChar, TokenGroup};
+use crate::syntax::ast::path::AstPathDirect;
+use crate::syntax::ast::util::{util_match_group, util_match_punct, AstCx};
+use crate::syntax::token::ir::{PunctChar, TokenGroup};
 use crate::util::reader::LookaheadReader;
 
 #[derive(Debug, Clone)]
