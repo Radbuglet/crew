@@ -119,7 +119,7 @@ impl Display for Span {
 
 impl Span {
     pub fn new<A: Take<FileLoc>, B: Take<FileLoc>>(a: A, b: B) -> Self {
-        let (a, b) = (a.take(), b.as_ref());
+        let (a, b) = (a.take_owned(), b.take_ref());
 
         assert_eq!(
             a.file(),
@@ -185,7 +185,7 @@ impl Span {
     }
 
     pub fn set_start<L: Take<FileLoc>>(&mut self, loc: L) {
-        let loc = loc.as_ref();
+        let loc = loc.take_ref();
         assert_eq!(
             loc.file(),
             self.file(),
@@ -196,7 +196,7 @@ impl Span {
     }
 
     pub fn set_end<L: Take<FileLoc>>(&mut self, loc: L) {
-        let loc = loc.as_ref();
+        let loc = loc.take_ref();
         assert_eq!(
             loc.file(),
             self.file(),
@@ -552,6 +552,7 @@ impl LookaheadReader for FileReader<'_> {}
 
 /// An abstraction over unicode that represents an indivisible unit of text. Characters are
 /// categorized by how they are typically handled by code editors.
+// TODO: Display routines are still super vulnerable to inband rendering modifiers.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum ReadAtom {
     /// Codepoints best correspond with the editor's notion of a character, even though some rich

@@ -1,5 +1,5 @@
 use crate::syntax::parse::path::AstPathDirect;
-use crate::syntax::parse::util::{util_match_group, util_match_punct, ParserCx};
+use crate::syntax::parse::util::{util_match_group, util_match_punct, AstCx};
 use crate::syntax::token::{PunctChar, TokenGroup};
 use crate::util::reader::LookaheadReader;
 
@@ -10,7 +10,7 @@ pub struct AstAnyAttrMacro {
 }
 
 impl AstAnyAttrMacro {
-    pub fn parse((cx, reader): ParserCx) -> Option<(bool, Self)> {
+    pub fn parse((cx, reader): AstCx) -> Option<(bool, Self)> {
         reader.lookahead(|reader| {
             // Match @ symbol
             util_match_punct(reader, PunctChar::At, None)?;
@@ -28,14 +28,14 @@ impl AstAnyAttrMacro {
         })
     }
 
-    pub fn parse_inner((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse_inner((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| match Self::parse((cx, reader)) {
             Some((true, attr)) => Some(attr),
             _ => None,
         })
     }
 
-    pub fn parse_outer((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse_outer((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| match Self::parse((cx, reader)) {
             Some((false, attr)) => Some(attr),
             _ => None,
@@ -49,7 +49,7 @@ pub struct AstAttrQualifier {
 }
 
 impl AstAttrQualifier {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         Some(Self {
             attr: AstAnyAttrMacro::parse_outer((cx, reader))?,
         })

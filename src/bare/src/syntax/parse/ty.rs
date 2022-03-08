@@ -1,7 +1,7 @@
 use crate::syntax::parse::path::AstPathDirect;
 use crate::syntax::parse::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
-    util_punct_matcher, ParserCx,
+    util_punct_matcher, AstCx,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
@@ -17,7 +17,7 @@ enum_categories! {
 }
 
 impl AstType {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         match_choice!(
             reader,
             |reader| Some(AstTypeObj::parse((cx, reader))?.wrap()),
@@ -34,7 +34,7 @@ pub struct AstTypeObj {
 }
 
 impl AstTypeObj {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             let path = AstPathDirect::parse((cx, reader))?;
             let generics = AstTypeObjGenerics::parse((cx, reader))?;
@@ -56,7 +56,7 @@ pub enum GenericParamKind {
 }
 
 impl AstTypeObjGenerics {
-    pub fn parse((cx, reader): ParserCx) -> Option<Option<Self>> {
+    pub fn parse((cx, reader): AstCx) -> Option<Option<Self>> {
         reader.lookahead(|reader| {
             // Match '<'
             if util_match_punct(reader, PunctChar::Less, None).is_some() {
@@ -82,7 +82,7 @@ impl AstTypeObjGenerics {
         })
     }
 
-    pub fn parse_param((cx, reader): ParserCx) -> Option<GenericParamKind> {
+    pub fn parse_param((cx, reader): AstCx) -> Option<GenericParamKind> {
         // N.B. we match named in a higher priority group than unnamed because the unnamed grammar
         // is a partial subset of named but not vice-versa.
         match_choice!(
@@ -112,7 +112,7 @@ pub struct AstTypeTuple {
 }
 
 impl AstTypeTuple {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             let paren = util_match_group_delimited(reader, GroupDelimiter::Paren)?;
             let mut reader = paren.reader();
@@ -138,7 +138,7 @@ impl AstTypeTuple {
 pub struct AstTypeNever;
 
 impl AstTypeNever {
-    pub fn parse((_cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((_cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             util_match_punct(reader, PunctChar::Exclamation, None)?;
             Some(AstTypeNever)

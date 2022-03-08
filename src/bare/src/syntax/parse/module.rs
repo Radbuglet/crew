@@ -2,7 +2,7 @@ use crate::syntax::parse::macros::{AstAnyAttrMacro, AstAttrQualifier};
 use crate::syntax::parse::path::{AstPathTree, AstVisQualifier};
 use crate::syntax::parse::util::{
     util_match_eof, util_match_group_delimited, util_match_ident, util_match_punct,
-    util_match_specific_kw, AstKeyword, ParserCx,
+    util_match_specific_kw, AstCx, AstKeyword,
 };
 use crate::syntax::token::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
@@ -15,7 +15,7 @@ pub struct AstModule {
 }
 
 impl AstModule {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         // Match inner attributes
         let inner_attrs = reader
             .consume_while(|reader| AstAnyAttrMacro::parse_inner((cx, reader)))
@@ -30,7 +30,7 @@ impl AstModule {
         })
     }
 
-    pub fn parse_parts((cx, reader): ParserCx) -> Option<Vec<AstModItem>> {
+    pub fn parse_parts((cx, reader): AstCx) -> Option<Vec<AstModItem>> {
         reader.lookahead(|reader| {
             // Collect parts
             let parts = reader
@@ -52,7 +52,7 @@ pub struct AstModItem {
 }
 
 impl AstModItem {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         // Collect qualifiers
         let qualifiers = reader
             .consume_while(|reader| AstModQualifier::parse((cx, reader)))
@@ -77,7 +77,7 @@ enum_categories! {
 }
 
 impl AstModItemKind {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         match_choice!(
             reader,
             |reader| Some(AstModModule::parse((cx, reader))?.wrap()),
@@ -94,7 +94,7 @@ pub struct AstModModule {
 }
 
 impl AstModModule {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match mod keyword
             util_match_specific_kw(reader, AstKeyword::Mod)?;
@@ -127,7 +127,7 @@ pub struct AstModBlock {
 }
 
 impl AstModBlock {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             let group = util_match_group_delimited(reader, GroupDelimiter::Brace)?;
             let parts = AstModule::parse_parts((cx, &mut group.reader()))?;
@@ -143,7 +143,7 @@ pub struct AstModUse {
 }
 
 impl AstModUse {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         reader.lookahead(|reader| {
             // Match "use"
             util_match_specific_kw(reader, AstKeyword::Use)?;
@@ -170,7 +170,7 @@ enum_categories! {
 }
 
 impl AstModQualifier {
-    pub fn parse((cx, reader): ParserCx) -> Option<Self> {
+    pub fn parse((cx, reader): AstCx) -> Option<Self> {
         match_choice!(
             reader,
             |reader| Some(AstVisQualifier::parse((cx, reader))?.wrap()),

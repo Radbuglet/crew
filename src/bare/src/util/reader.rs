@@ -1,105 +1,4 @@
-// TODO: Make error handling less confusing...
-
 use std::marker::PhantomData;
-
-// === PResults === //
-
-pub type PResult<T, E> = Result<Option<T>, E>;
-pub type BarePResult<T> = PResult<T, ()>;
-
-pub trait PResultOptionExt {
-    type Value;
-
-    fn ok_or_unmatched<E>(self) -> PResult<Self::Value, E>;
-
-    fn ok_or_with_error<F, E>(self, on_missing: F) -> PResult<Self::Value, E>
-    where
-        F: FnMut() -> E;
-
-    fn ok_or_error<E>(self, err: E) -> PResult<Self::Value, E>;
-
-    fn ok_or_default_error<E: Default>(self) -> PResult<Self::Value, E>;
-}
-
-impl<T> PResultOptionExt for Option<T> {
-    type Value = T;
-
-    fn ok_or_unmatched<E>(self) -> PResult<Self::Value, E> {
-        match self {
-            Some(value) => Ok(Some(value)),
-            None => Ok(None),
-        }
-    }
-
-    fn ok_or_with_error<F, E>(self, mut on_missing: F) -> PResult<Self::Value, E>
-    where
-        F: FnMut() -> E,
-    {
-        match self {
-            Some(value) => Ok(Some(value)),
-            None => Err(on_missing()),
-        }
-    }
-
-    fn ok_or_error<E>(self, err: E) -> PResult<Self::Value, E> {
-        match self {
-            Some(value) => Ok(Some(value)),
-            None => Err(err),
-        }
-    }
-
-    fn ok_or_default_error<E: Default>(self) -> PResult<Self::Value, E> {
-        self.ok_or_with_error(Default::default)
-    }
-}
-
-pub trait PResultExt {
-    type Success;
-    type Error;
-
-    fn invert(self) -> Option<Result<Self::Success, Self::Error>>;
-
-    fn expect_with<F>(self, on_missing: F) -> Result<Self::Success, Self::Error>
-    where
-        F: FnMut() -> Self::Error;
-
-    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error>;
-
-    fn expect_default(self) -> Result<Self::Success, Self::Error>
-    where
-        Self::Error: Default;
-}
-
-impl<T, E> PResultExt for PResult<T, E> {
-    type Success = T;
-    type Error = E;
-
-    fn invert(self) -> Option<Result<Self::Success, Self::Error>> {
-        match self {
-            Ok(Some(present)) => Some(Ok(present)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
-    }
-
-    fn expect_with<F>(self, mut on_missing: F) -> Result<Self::Success, Self::Error>
-    where
-        F: FnMut() -> Self::Error,
-    {
-        self.invert().unwrap_or_else(|| Err(on_missing()))
-    }
-
-    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error> {
-        self.invert().unwrap_or(Err(on_missing))
-    }
-
-    fn expect_default(self) -> Result<Self::Success, Self::Error>
-    where
-        Self::Error: Default,
-    {
-        self.expect_with(Default::default)
-    }
-}
 
 // === Lookahead machinery === //
 
@@ -107,15 +6,16 @@ impl<T, E> PResultExt for PResult<T, E> {
 /// special because they allow users to fork the cursor and "look-ahead" an arbitrary number of
 /// elements to see if the grammar matches.
 ///
-/// Match functions map fairly well to the notion of [production rules] but have one important
-/// additional responsibility. In theory, while the entire grammar of a language could be built up of
-/// silently matching production rules with the validity of the root-most rule determining whether the
-/// program is valid, the user would loose context as to why their syntax was invalid. Thus, match
-/// functions have the additional responsibility of detecting the user's intention, yielding
-/// appropriate diagnostic messages on a grammar mismatch, and recovering to a safer state to continue
-/// parsing.
+/// **Match functions** are functions which take in a `LookaheadReader` (also known as a "cursor") and
+/// produce an abstract-syntax-tree representation of that grammar, mapping fairly well to the notion
+/// of [production rules]. However, match functions have one important additional responsibility. In
+/// theory, while the entire grammar of a language could be built up of silently matching production
+/// rules with the validity of the root-most rule determining whether the program is valid, the user
+/// would loose context as to why their syntax was invalid. Thus, match functions have the additional
+/// responsibility of yielding appropriate diagnostic messages on a grammar mismatch, and recovering
+/// to a safer state to continue parsing.
 ///
-/// ## Callbacks over Composition
+/// ## Extension Callbacks
 ///
 /// This additional responsibility complicates matters when there is overlap between a match function's
 /// grammatical requirements and the grammatical capabilities of subsequent match functions. Consider,
@@ -129,11 +29,11 @@ impl<T, E> PResultExt for PResult<T, E> {
 /// }
 /// ```
 ///
-/// There are two contexts in which a path can be used: a `use` item where each path can be ended
-/// with a `"::" + <terminator>` and in expressions where this is not possible. It's tempting to
-/// construct a match function that just matches this first "simple path" part and then compose that
-/// with another function to match the optional terminator, however doing so complicates diagnostic
-/// handling.
+/// There are two contexts in which a path (the `foo::bar::baz` syntax alone) can be used: a `use`
+/// item where each path can be ended with a `"::" + <terminator>` and in expressions where this is
+/// not possible. It's tempting to construct a match function that just matches this first "simple path"
+/// part and then compose that with another function to match the optional terminator, however doing
+/// so complicates diagnostic handling.
 ///
 /// In a non-composed implementation of a path tree parser, we could say that turbo (`::`) delimiters
 /// must be followed by either a non-keyword identifier or a braced group of nested paths. In the
@@ -145,8 +45,8 @@ impl<T, E> PResultExt for PResult<T, E> {
 ///
 /// ```no_run
 ///  use foo::bar::baz::;
-///  //               ^ the error is technically the path not being followed by a `:: + <group>` or a `;`.
-///  //                 ^ however, the actual list of valid grammatical elements should also include `idents`.
+///  //               ^ the error is technically the **simple path** not being followed by a `:: + {<path list>}` or a `;`.
+///  //                 ^ however, the actual error is that **turbos** can either be followed by a `;` or a `{<path list>}`.
 ///
 /// static val foo: bar::baz:: = ...;
 /// //                      ^ the error is technically the simple path not being followed by a `=` or `;`
@@ -154,55 +54,47 @@ impl<T, E> PResultExt for PResult<T, E> {
 /// ```
 ///
 /// To fix this, matcher functions can take matcher closures to extend their grammar. In this case,
-/// the `match_simple_path` can accept a closure taking a mutable [LookaheadReader] reference which
-/// will provide an additional way to match an unclosed terminator. This both enables the primary
+/// the `match_simple_path` can accept a closure taking a mutable [LookaheadReader] reference, which
+/// can provide an additional way to match an unclosed terminator. This both enables the primary
 /// function to detect illegal terminators (since the closure could produce the appropriate error in
 /// the correct context) and would allow the grammar extensions to work off context from the parent
 /// function which would have otherwise been discarded.
 ///
+/// Extension callbacks are preferred, even when users could pass along the terminal state as a
+/// return value, because this alternative method introduces additional complexity:
+///
+/// 1. The solution works worse with [LookaheadReader::lookahead]. Regular match methods either
+///    commit the successful lookahead state or reject it. However, this alternative approach to the
+///    "simple path" parser leaves some ambiguity up in the air. Should it commit the trailing turbo
+///    or not? If it doesn't, it could force users to redo work. If it did, how could users return to
+///    a state before the turbo was matched?
+/// 2. The solution works worse with [match_choice] error building. [match_choice] can automatically
+///    combine parse errors into one giant "unexpected <element>, expected <list of choices>" error
+///    message. Without this additional mechanism, users would have to extend this error message
+///    manually. In other words, while it may *feel* like a match closure is a terminal call, it
+///    oftentimes isn't; constructs like [match_choice] have to do additional processing of the
+///    returned result.
+/// 3. Closure adapters like `with_impossible` and `impossible` don't work. Instead, users wanting to
+///    parse a regular simple path without any extensions must manually handle the flag, which is more
+///    work.
+/// 4. It breaks convention.
+///
+/// Rather than try to make an abstract decision between composition and extension callbacks, users
+/// should compose *complete* matcher functions but fall back to extension callbacks where doing so
+/// is not possible.
+///
 /// ## Cursor Recovery
 ///
-/// Some [LookaheadReaders] must occasionally do more than just report precise errors. Part of
-/// implementing good diagnostics is making sure that the compiler can reasonably recover from the
-/// error and attempt to analyze the rest of the project so that the user can fix as many errors as
-/// possible from a single compilation's diagnostics. Part of error recovery is ensuring that the
-/// cursor can proceed past the illegal grammatical element, what we call "cursor recovery". Deciding
-/// when to attempt to recover from a grammatical mismatch is similar to the decision of whether to
-/// fail silently or to produce a diagnostic message. Once the match function detects a syntactical
-/// error in the middle of the input and the user's intent can be unambiguously traced to that
-/// grammatical rule, the implementor can attempt to consume syntactic atoms until the reader is at
-/// the start of the next likely grammatical element.
+/// Because of the heavyweight nature of compilers, it is better for the users if parsers can recover
+/// from certain classes of syntax errors and continue parsing so that the compiler can emit and users
+/// can address as many diagnostics as possible at once.
 ///
-/// Here are a few examples of how this would work in statement parsing:
+/// When a match function detects a potential syntax error that a) it knows cannot be matched by other
+/// functions and b) can reasonably recover from, it is encouraged to skip the offending grammar to
+/// put the cursor back into a valid state, produce an AST fragment such that the lookahead accepts
+/// the result as a "successful parse", and push its errors to a passive diagnostic reporter.
 ///
-/// ```no_run
-/// let foo = ;
-/// //        ^ we failed to match the expected expression.
-/// //          Let's consume to the semicolon and continue parsing.
-/// let bar baz = 4;
-/// //      ^ we got a second identifier.
-/// //        Let's try to consume to the equality sign so we can continue parsing the expression.
-/// //        If that fails, let's consume until we reach either the semicolon or the EOF.
-///
-/// let foo 4;
-/// //      ^ we're missing the equality punct.
-/// //        Let's try to match everything up until the semicolon or the EOF as an expression.
-///
-/// let foo = 4 let next_statement = 4;
-/// //          ^ we get an unexpected keyword here while parsing the expression.
-/// //            We can interrupt the expression atomization phase on this error and use everything
-/// //            left of the statement keyword as the expression and use the keyword as the next
-/// //            token to return once the parse function is recovered.
-/// ```
-///
-/// Alternatively, match functions could accept closures for callbacks specifically for error handling
-/// and then propagate the function's return result. That way, users can decide whether to treat the
-/// error as a hard error or attempt cursor recovery with the grammatical parent's additional context.
-///
-/// The [lookahead] method commits or discards the cursor state depending on the "truthiness" of the
-/// closure's return value. It may seem weird to return a `Some(Err(...))` to represent a recovered
-/// error so it may be useful to think of the root-level return value of a match function as
-/// indicating syntactic *intent* instead of syntactic *validity*.
+/// TODO: Add a way to limit lookahead using a wrapper (e.g. a lookahead_limited method)?
 ///
 /// [LookaheadReaders]: LookaheadReader
 /// [production rules]: https://en.wikipedia.org/wiki/Production_(computer_science)
@@ -211,16 +103,7 @@ pub trait LookaheadReader: Clone {
     /// Attempts to match the reader sequence using the handler, committing the state if the return
     /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
     /// ignoring all reader state changes otherwise.
-    fn lookahead<F, R>(&mut self, handler: F) -> R::LookaheadRes
-    where
-        F: FnOnce(&mut Self) -> R,
-        R: LookaheadResult,
-    {
-        self.lookahead_raw(handler).into_result()
-    }
-
-    /// Same behavior as [lookahead] except it doesn't unwrap the returned [LookaheadResult].
-    fn lookahead_raw<F, R>(&mut self, handler: F) -> R
+    fn lookahead<F, R>(&mut self, handler: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
@@ -233,14 +116,13 @@ pub trait LookaheadReader: Clone {
         res
     }
 
-    /// Forks the reader and peaks ahead without ever committing the result. Will unwrap any returned
-    /// [LookaheadResult]s.
-    fn peek_ahead<F, R>(&self, handler: F) -> R::LookaheadRes
+    /// Forks the reader and peaks ahead without ever committing the result.
+    fn peek_ahead<F, R>(&self, handler: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
         R: LookaheadResult,
     {
-        handler(&mut self.clone()).into_result()
+        handler(&mut self.clone())
     }
 
     /// Consumes from the reader while the grammar matches and returns an iterator of the elements
@@ -255,68 +137,40 @@ pub trait LookaheadReader: Clone {
     }
 }
 
-/// A [LookaheadResult] tells [LookaheadReader::lookahead] whether the lookahead matched and can
-/// unwrap itself into a simpler form for consumers of that lookahead.
+/// A [LookaheadResult] tells [LookaheadReader::lookahead] whether the lookahead matched.
 pub trait LookaheadResult {
-    type LookaheadRes;
-
     fn should_commit(&self) -> bool;
-    fn into_result(self) -> Self::LookaheadRes;
 }
 
 impl LookaheadResult for bool {
-    type LookaheadRes = Self;
-
     fn should_commit(&self) -> bool {
         *self
-    }
-
-    fn into_result(self) -> Self::LookaheadRes {
-        self
     }
 }
 
 impl<T> LookaheadResult for Option<T> {
-    type LookaheadRes = Self;
-
     fn should_commit(&self) -> bool {
         self.is_some()
     }
-
-    fn into_result(self) -> Self::LookaheadRes {
-        self
-    }
 }
 
-impl<T, E> LookaheadResult for PResult<T, E> {
-    type LookaheadRes = Self;
-
+impl<T, E> LookaheadResult for Result<T, E> {
     fn should_commit(&self) -> bool {
-        match self {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(_) => true,
-        }
-    }
-
-    fn into_result(self) -> Self {
-        self
+        self.is_ok()
     }
 }
 
 // === Repetition matching === //
 
-/// A [RepeatResult] tells a [ConsumeWhileIter] two things:
-///
-/// 1. Whether it should continue iterating or return a value.
-/// 2. Whether to commit the lookahead for that specific iteration (inherited from [LookaheadResult]).
-///
+/// A [RepeatResult] tells a [ConsumeWhileIter] whether it should continue iterating, return a final
+/// value, or finish without returning anything. This happens entirely independently from
+/// [LookaheadResult], which tells the iterator whether to keep result of an iteration.
 pub trait RepeatResult: Sized + LookaheadResult {
     type RepeatRes;
 
     /// Attempts to unwrap the result into the value returned by the iterator. The first element
     /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
-    /// regardless if the result is `None`.
+    /// without emitting anything if the result is `None`.
     fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)>;
 }
 
@@ -339,13 +193,12 @@ impl<T> RepeatResult for Option<T> {
     }
 }
 
-impl<T, E> RepeatResult for PResult<T, E> {
+impl<T, E> RepeatResult for Result<T, E> {
     type RepeatRes = Result<T, E>;
 
     fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
         match self {
-            Ok(Some(val)) => Some((true, Ok(val))),
-            Ok(None) => None,
+            Ok(value) => Some((true, Ok(value))),
             Err(err) => Some((false, Err(err))),
         }
     }
@@ -359,17 +212,11 @@ pub enum RepFlow<T> {
 }
 
 impl<T> LookaheadResult for RepFlow<T> {
-    type LookaheadRes = Self;
-
     fn should_commit(&self) -> bool {
         match self {
             Self::Reject => false,
             _ => true,
         }
-    }
-
-    fn into_result(self) -> Self::LookaheadRes {
-        self
     }
 }
 
@@ -426,7 +273,7 @@ where
             return None;
         }
 
-        let res = self.reader.lookahead_raw(&mut self.handler);
+        let res = self.reader.lookahead(&mut self.handler);
 
         match res.into_stream_result() {
             Some((true, res)) => Some(res),
@@ -477,8 +324,7 @@ impl<Reader, FDel, Res> DelimiterMatcher<Reader, FDel, Res>
 where
     Reader: LookaheadReader,
     FDel: FnMut(&mut Reader) -> Res,
-    Res: LookaheadResult,
-    Res::LookaheadRes: Default,
+    Res: LookaheadResult + Default,
 {
     pub fn new(match_del: FDel, require_leading: bool) -> Self {
         Self {
@@ -496,14 +342,14 @@ where
         self.first
     }
 
-    pub fn next(&mut self, reader: &mut Reader) -> Option<Res::LookaheadRes> {
+    pub fn next(&mut self, reader: &mut Reader) -> Option<Res> {
         if self.first {
             self.first = false;
             Some(Default::default())
         } else {
-            let res = reader.lookahead_raw(&mut self.match_del);
+            let res = reader.lookahead(&mut self.match_del);
             if res.should_commit() {
-                Some(res.into_result())
+                Some(res)
             } else {
                 None
             }
@@ -513,13 +359,53 @@ where
 
 // === Branch matching === //
 
+/// A [LookaheadResult] with a clear error variant and a way to accumulate uncommitted values into a
+/// single error.
+pub trait ErrorAccumulator {
+    fn empty_error() -> Self;
+    fn extend_error(&mut self, error: Self);
+}
+
+impl ErrorAccumulator for bool {
+    fn empty_error() -> Self {
+        false
+    }
+
+    fn extend_error(&mut self, _: Self) {}
+}
+
+impl<T> ErrorAccumulator for Option<T> {
+    fn empty_error() -> Self {
+        None
+    }
+
+    fn extend_error(&mut self, _: Self) {}
+}
+
+impl<T, E: ErrorAccumulator> ErrorAccumulator for Result<T, E> {
+    fn empty_error() -> Self {
+        Err(E::empty_error())
+    }
+
+    fn extend_error(&mut self, error: Self) {
+        self.as_mut()
+            .err()
+            .unwrap()
+            .extend_error(error.err().unwrap());
+    }
+}
+
 // ...not sure why this is needed but type inference prefers it so ¯\_(ツ)_/¯
+#[doc(hidden)]
 pub fn helper_call_closure<F, A, R>(fn_: F, arg: A) -> R
 where
     F: FnOnce(A) -> R,
 {
     fn_(arg)
 }
+
+#[doc(hidden)]
+pub fn helper_assert_equal_types<T: ?Sized>(_: &T, _: &T) {}
 
 pub macro match_choice {
     (
@@ -537,26 +423,49 @@ pub macro match_choice {
         // This loop allows us to short-circuit early if one of the inner groups succeeds.
         loop {
             let reader = $reader;
+            let mut error = ErrorAccumulator::empty_error();
 
+            // For every atomic block...
             $({
+                // Keep track of the current successes.
                 let mut result = None;
 
+                // For every pattern...
                 $({
+                    // Fork the reader
                     let mut fork = Clone::clone(reader);
+
+                    // And lookahead
                     let fork_res = helper_call_closure(|$binding| $expr, &mut fork);
+
+                    // This hint tells Rust inference that errors and results are of the same type
+                    // so that we can call "extend_error" without inference issues.
+                    // TODO: Is this really necessary?
+                    helper_assert_equal_types(&error, &fork_res);
+
+                    // Check if the pattern was matched successfully.
                     if LookaheadResult::should_commit(&fork_res) {
+                        // If it was, ensure that it's not conflicting with anything else in the block.
                         debug_assert!(result.is_none(), "Ambiguous pattern!");
+
+                        // And mark this as the one result to be returned at the end of the block if
+                        // everything goes to plan.
                         result = Some((fork, fork_res));
+                    } else {
+                        // Otherwise, extend the error.
+                        ErrorAccumulator::extend_error(&mut error, fork_res);
                     }
                 })*
 
+                // If we matched anything in the block, commit the reader and return it.
                 if let Some((fork, result)) = result {
                     *reader = fork;
                     break result;
                 }
             })*
 
-            break Default::default();
+            // If none of the blocks ever matched, return an accumulated error.
+            break error;
         }
     }
 }

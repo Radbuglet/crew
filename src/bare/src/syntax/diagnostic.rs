@@ -1,9 +1,133 @@
 use crate::syntax::span::{FileReader, ReadAtom, Span};
 use crate::util::enum_utils::{enum_meta, EnumMeta};
 use crate::util::fmt::{FmtPaddedNumber, FmtRepeat};
-use crate::util::reader::{LookaheadReader, StreamReader};
+use crate::util::reader::{ErrorAccumulator, LookaheadReader, StreamReader};
 use colored::{Color, Colorize};
-use std::fmt::Display;
+use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
+
+// === Parse Results === //
+
+pub type PResult<T> = Result<T, ParseError>;
+
+pub trait PResultExt {
+    type Result;
+
+    fn push_diag(self, diagnostic: &mut Diagnostics) -> Result<Self::Result, ()>;
+}
+
+impl<T> PResultExt for PResult<T> {
+    type Result = T;
+
+    fn push_diag(self, diagnostic: &mut Diagnostics) -> Result<Self::Result, ()> {
+        self.map_err(|err| {
+            err.push_diag(diagnostic);
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    contents: Option<ParseErrorNonEmpty>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseErrorNonEmpty {
+    span: Span,
+    encountered: String,
+    expected: Vec<String>,
+}
+
+impl ParseError {
+    pub fn empty() -> Self {
+        Self { contents: None }
+    }
+
+    pub fn new<U, E>(span: Span, encountered: U, expected: &[E]) -> Self
+    where
+        U: Display,
+        E: Display,
+    {
+        Self {
+            contents: Some(ParseErrorNonEmpty {
+                span,
+                encountered: encountered.to_string(),
+                expected: expected.into_iter().map(|err| err.to_string()).collect(),
+            }),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.contents.is_none()
+    }
+
+    pub fn push_diag(self, diag: &mut Diagnostics) {
+        let contents = self
+            .contents
+            .as_ref()
+            .expect("Cannot push diagnostics for an empty parse error.");
+
+        diag.display_error(
+            contents.span.clone(),
+            format!(
+                "Expected one of {}, found {}",
+                ExpectListFmt(contents.expected.as_slice()),
+                contents.encountered,
+            ),
+        );
+    }
+
+    fn logical_pos(&self) -> usize {
+        self.contents
+            .as_ref()
+            .map_or(0, |inner| inner.span.start().char_index())
+    }
+}
+
+impl ErrorAccumulator for ParseError {
+    fn empty_error() -> Self {
+        Self::empty()
+    }
+
+    fn extend_error(&mut self, mut error: Self) {
+        match self.logical_pos().cmp(&error.logical_pos()) {
+            Ordering::Less => *self = error,
+            Ordering::Equal => match (&mut self.contents, &mut error.contents) {
+                (Some(a), Some(b)) => a.expected.append(&mut b.expected),
+                (Some(_), None) => { /* no errors to append */ }
+                (None, None) => { /* no errors to append */ }
+                (None, Some(_)) => unreachable!(),
+            },
+            Ordering::Greater => { /* no errors to append */ }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExpectListFmt<'a>(&'a [String]);
+
+impl Display for ExpectListFmt<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let expected_list = &self.0;
+        for (i, expected) in expected_list.iter().enumerate() {
+            // Push prefix
+            if i == expected_list.len() - 1 {
+                f.write_str(", or ")?;
+            } else if i > 0 {
+                f.write_str(", ")?;
+            } else {
+                // No prefix for first element
+            }
+
+            // Push element
+            f.write_str(expected.as_str())?;
+        }
+
+        Ok(())
+    }
+}
+
+// === Diagnostics === //
 
 #[derive(Debug, Default, Clone)]
 pub struct Diagnostics {
@@ -13,11 +137,6 @@ pub struct Diagnostics {
 impl Diagnostics {
     pub fn new() -> Self {
         Default::default()
-    }
-
-    pub fn fatal<F: Display>(&mut self, span: Span, text: F) -> Result<!, ()> {
-        self.display_error(span, text);
-        Err(())
     }
 
     pub fn display_error<F: Display>(&mut self, span: Span, text: F) {

@@ -32,9 +32,7 @@ use crate::syntax::diagnostic::Diagnostics;
 use crate::syntax::span::{CharOrEof, FileLoc, FileReader, ReadAtom, Span};
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, enum_meta, EnumMeta, VariantOf};
-use crate::util::reader::{
-    match_choice, BarePResult, LookaheadReader, PResultExt, RepFlow, StreamReader,
-};
+use crate::util::reader::{match_choice, LookaheadReader, RepFlow, StreamReader};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::iter::FromIterator;
 use std::rc::Rc;
@@ -494,6 +492,7 @@ enum_categories! {
         BlockComment,
     }
 }
+
 // === Tokenizing === //
 
 pub fn tokenize_file(reader: &mut FileReader, diag: &mut Diagnostics) -> Result<TokenGroup, ()> {
@@ -936,7 +935,7 @@ pub fn tokenize_read_digits<'a, 'b>(
 pub fn group_match_number_lit(
     reader: &mut FileReader,
     diag: &mut Diagnostics,
-) -> BarePResult<TokenNumberLit> {
+) -> OldBarePResult<TokenNumberLit> {
     reader.lookahead(|reader| {
         let start = reader.next_loc();
 
@@ -1077,7 +1076,10 @@ pub fn string_match_multiline_escape(reader: &mut FileReader) -> bool {
     }
 }
 
-pub fn string_match_escape(reader: &mut FileReader, diag: &mut Diagnostics) -> BarePResult<char> {
+pub fn string_match_escape(
+    reader: &mut FileReader,
+    diag: &mut Diagnostics,
+) -> OldBarePResult<char> {
     reader.lookahead(|reader| {
         let escape_start = reader.next_loc();
 
@@ -1175,4 +1177,116 @@ pub fn string_match_end(reader: &mut FileReader) -> bool {
 
 pub fn comment_match_block_end(reader: &mut FileReader) -> bool {
     match_str(reader, "*/")
+}
+
+// === Legacy error handling === //
+
+// TODO: Use new diagnostic system.
+
+type OldPResult<T, E> = Result<Option<T>, E>;
+type OldBarePResult<T> = OldPResult<T, ()>;
+
+trait PResultOptionExt {
+    type Value;
+
+    fn ok_or_unmatched<E>(self) -> OldPResult<Self::Value, E>;
+
+    fn ok_or_with_error<F, E>(self, on_missing: F) -> OldPResult<Self::Value, E>
+    where
+        F: FnMut() -> E;
+
+    fn ok_or_error<E>(self, err: E) -> OldPResult<Self::Value, E>;
+
+    fn ok_or_default_error<E: Default>(self) -> OldPResult<Self::Value, E>;
+}
+
+impl<T> PResultOptionExt for Option<T> {
+    type Value = T;
+
+    fn ok_or_unmatched<E>(self) -> OldPResult<Self::Value, E> {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Ok(None),
+        }
+    }
+
+    fn ok_or_with_error<F, E>(self, mut on_missing: F) -> OldPResult<Self::Value, E>
+    where
+        F: FnMut() -> E,
+    {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Err(on_missing()),
+        }
+    }
+
+    fn ok_or_error<E>(self, err: E) -> OldPResult<Self::Value, E> {
+        match self {
+            Some(value) => Ok(Some(value)),
+            None => Err(err),
+        }
+    }
+
+    fn ok_or_default_error<E: Default>(self) -> OldPResult<Self::Value, E> {
+        self.ok_or_with_error(Default::default)
+    }
+}
+
+pub trait PResultExt {
+    type Success;
+    type Error;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>>;
+
+    fn expect_with<F>(self, on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error;
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error>;
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default;
+}
+
+impl<T, E> PResultExt for OldPResult<T, E> {
+    type Success = T;
+    type Error = E;
+
+    fn invert(self) -> Option<Result<Self::Success, Self::Error>> {
+        match self {
+            Ok(Some(present)) => Some(Ok(present)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
+    }
+
+    fn expect_with<F>(self, mut on_missing: F) -> Result<Self::Success, Self::Error>
+    where
+        F: FnMut() -> Self::Error,
+    {
+        self.invert().unwrap_or_else(|| Err(on_missing()))
+    }
+
+    fn expect(self, on_missing: Self::Error) -> Result<Self::Success, Self::Error> {
+        self.invert().unwrap_or(Err(on_missing))
+    }
+
+    fn expect_default(self) -> Result<Self::Success, Self::Error>
+    where
+        Self::Error: Default,
+    {
+        self.expect_with(Default::default)
+    }
+}
+
+pub trait DiagnosticsFatalExt {
+    fn fatal<F: Display>(&mut self, span: Span, text: F) -> Result<!, ()>;
+}
+
+impl DiagnosticsFatalExt for Diagnostics {
+    fn fatal<F: Display>(&mut self, span: Span, text: F) -> Result<!, ()> {
+        self.display_error(span, text);
+        Err(())
+    }
 }

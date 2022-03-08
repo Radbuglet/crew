@@ -13,10 +13,10 @@ use std::fmt::{Debug, Display, Formatter};
 
 // === Parser context === //
 
-pub type ParserCx<'r, 'a> = (&'r mut ParserBundle, &'r mut TokenStreamReader<'a>);
+pub type AstCx<'r, 'a> = (&'r mut AstBundle, &'r mut TokenStreamReader<'a>);
 
 #[derive(Debug, Clone)]
-pub struct ParserBundle {
+pub struct AstBundle {
     pub diag: Diagnostics,
 }
 

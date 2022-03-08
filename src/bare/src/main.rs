@@ -13,8 +13,6 @@
 #![feature(try_trait_v2)]
 #![feature(unsize)]
 
-use crate::syntax::parse::util::ParserBundle;
-
 pub mod semantic;
 pub mod syntax;
 pub mod util;
@@ -22,6 +20,7 @@ pub mod util;
 fn main() -> Result<(), ()> {
     use crate::syntax::diagnostic::Diagnostics;
     use crate::syntax::parse::module::AstModule;
+    use crate::syntax::parse::util::AstBundle;
     use crate::syntax::span::SourceFile;
     use crate::syntax::token::tokenize_file;
     use std::path::PathBuf;
@@ -42,7 +41,7 @@ fn main() -> Result<(), ()> {
 
     // Parse AST
     let parsed = {
-        let mut cx = ParserBundle {
+        let mut cx = AstBundle {
             diag: Diagnostics::new(),
         };
         let parsed = AstModule::parse((&mut cx, &mut tokens.reader()));
