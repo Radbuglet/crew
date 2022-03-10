@@ -18,7 +18,7 @@ impl<T: Display> Display for FmtRepeat<T> {
 pub fn tab(count: u32) -> FmtRepeat<&'static str> {
     FmtRepeat {
         count,
-        text: "     ",
+        text: "    ",
     }
 }
 

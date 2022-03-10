@@ -1,5 +1,6 @@
 use crate::util::backing::Take;
-use crate::util::reader::{LookaheadReader, StreamReader, StreamResult};
+use crate::util::iter_ext::{RepFlow, ToIterControlFlow};
+use crate::util::reader::{LookaheadReader, StreamReader};
 use core::str::next_code_point;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -617,14 +618,13 @@ impl ReadAtom {
     }
 }
 
-impl StreamResult for ReadAtom {
+impl ToIterControlFlow for ReadAtom {
     type Item = ReadAtom;
 
-    fn to_item(self) -> Option<Self::Item> {
-        if self != ReadAtom::Eof {
-            Some(self)
-        } else {
-            None
+    fn to_rep_flow(self) -> RepFlow<Self::Item> {
+        match self {
+            ReadAtom::Eof => RepFlow::Break(ReadAtom::Eof),
+            _ => RepFlow::Continue(self),
         }
     }
 }

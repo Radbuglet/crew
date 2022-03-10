@@ -4,7 +4,8 @@ use crate::syntax::ast::util::{
     AstKeyword, IdentOrKw,
 };
 use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader, RepFlow};
+use crate::util::iter_ext::RepFlow;
+use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
 
 // === Shared === //
 
@@ -180,7 +181,7 @@ impl AstPathNode {
         reader.consume_while(|reader| {
             // Match delimiter
             if !delimited.next(reader).is_some() {
-                return RepFlow::Reject;
+                return RepFlow::None;
             }
 
             // Match either a terminator or a path part
@@ -196,13 +197,13 @@ impl AstPathNode {
             ) {
                 Some(Matched::Terminator(matched)) => {
                     terminator = matched;
-                    RepFlow::Finish(())
+                    RepFlow::Break(())
                 }
                 Some(Matched::Part(part)) => {
                     parts.push(part);
                     RepFlow::Continue(())
                 }
-                None => RepFlow::Reject,
+                None => RepFlow::None,
             }
         });
 

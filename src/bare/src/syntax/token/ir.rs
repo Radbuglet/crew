@@ -54,62 +54,11 @@ impl<'a> IntoIterator for &'a TokenStream {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TokenStreamReader<'a> {
-    span: Span,
-    tokens: &'a [Token],
-    prev: Option<&'a Token>,
+// === Token Types == //
+
+pub enum TokenOrEof {
+    Token(Token),
 }
-
-impl<'a> TokenStreamReader<'a> {
-    pub fn new(span: Span, tokens: &'a [Token]) -> Self {
-        Self {
-            span,
-            tokens,
-            prev: None,
-        }
-    }
-
-    pub fn prev(&self) -> Option<&'a Token> {
-        self.prev
-    }
-
-    pub fn remaining(&self) -> &'a [Token] {
-        self.tokens
-    }
-
-    pub fn next_loc(&self) -> FileLoc {
-        match self.peek() {
-            Some(next) => next.full_span().start(),
-            None => self.span.end(),
-        }
-    }
-
-    pub fn prev_loc(&self) -> FileLoc {
-        match self.prev() {
-            Some(prev) => prev.full_span().end(),
-            None => self.span.start(),
-        }
-    }
-}
-
-impl<'a> StreamReader for TokenStreamReader<'a> {
-    type Res = Option<&'a Token>;
-
-    fn consume(&mut self) -> Self::Res {
-        if !self.tokens.is_empty() {
-            self.prev = Some(&self.tokens[0]);
-            self.tokens = &self.tokens[1..];
-            self.prev
-        } else {
-            None
-        }
-    }
-}
-
-impl LookaheadReader for TokenStreamReader<'_> {}
-
-// === IR === //
 
 pub trait AnyToken: Display {
     fn full_span(&self) -> Span;
@@ -443,3 +392,61 @@ impl Display for StringComponent {
         }
     }
 }
+
+// === Token reading === //
+
+#[derive(Debug, Clone)]
+pub struct TokenStreamReader<'a> {
+    span: Span,
+    tokens: &'a [Token],
+    prev: Option<&'a Token>,
+}
+
+impl<'a> TokenStreamReader<'a> {
+    pub fn new(span: Span, tokens: &'a [Token]) -> Self {
+        Self {
+            span,
+            tokens,
+            prev: None,
+        }
+    }
+
+    pub fn prev(&self) -> Option<&'a Token> {
+        self.prev
+    }
+
+    pub fn remaining(&self) -> &'a [Token] {
+        self.tokens
+    }
+
+    pub fn next_loc(&self) -> FileLoc {
+        match self.peek() {
+            Some(next) => next.full_span().start(),
+            None => self.span.end(),
+        }
+    }
+
+    pub fn prev_loc(&self) -> FileLoc {
+        match self.prev() {
+            Some(prev) => prev.full_span().end(),
+            None => self.span.start(),
+        }
+    }
+}
+
+impl<'a> StreamReader for TokenStreamReader<'a> {
+    type Res = Option<&'a Token>;
+
+    fn consume(&mut self) -> Self::Res {
+        if !self.tokens.is_empty() {
+            let read = &self.tokens[0];
+            self.prev = Some(read);
+            self.tokens = &self.tokens[1..];
+            Some(read)
+        } else {
+            None
+        }
+    }
+}
+
+impl LookaheadReader for TokenStreamReader<'_> {}

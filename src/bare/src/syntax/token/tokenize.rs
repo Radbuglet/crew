@@ -17,7 +17,8 @@ use crate::syntax::token::ir::{
 };
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, EnumMeta, VariantOf};
-use crate::util::reader::{match_choice, LookaheadReader, RepFlow, StreamReader};
+use crate::util::iter_ext::RepFlow;
+use crate::util::reader::{match_choice, LookaheadReader, StreamReader};
 use std::fmt::Display;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -445,10 +446,10 @@ pub fn tokenize_read_digits<'a, 'b>(
         reader
             .consume_while(|reader| match reader.consume() {
                 ReadAtom::Codepoint(char) if alphabet_contains(digits, char) => {
-                    RepFlow::Finish(char.to_ascii_lowercase())
+                    RepFlow::Break(char.to_ascii_lowercase())
                 }
                 ReadAtom::Codepoint('_') => RepFlow::Continue('_'),
-                _ => RepFlow::Reject,
+                _ => RepFlow::None,
             })
             .last()
     })

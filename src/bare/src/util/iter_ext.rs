@@ -2,6 +2,167 @@ use std::iter::FromIterator;
 use std::mem::MaybeUninit;
 use std::ops::{ControlFlow, FromResidual, Try};
 
+// === Generic Adapters === //
+
+#[derive(Debug, Clone)]
+pub struct Adapts<A, S> {
+    adapter: A,
+    source: S,
+}
+
+impl<V, S: Iterator<Item = V>, A: IteratorAdapter<V>> Iterator for Adapts<A, S> {
+    type Item = A::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.adapter.next_iter(&mut self.source)
+    }
+}
+
+pub trait IteratorAdapterSingle<S>: Sized {
+    type Item;
+
+    fn next_single(&mut self, source: Option<S>) -> Option<Self::Item>;
+}
+
+impl<S, A: IteratorAdapterSingle<S>> IteratorAdapter<S> for A {
+    type Item = A::Item;
+
+    fn next_iter<I: IntoIterator<Item = S>>(&mut self, source: I) -> Option<Self::Item> {
+        self.next_single(source.into_iter().next())
+    }
+}
+
+pub trait IteratorAdapter<S>: Sized {
+    type Item;
+
+    fn next_iter<I: IntoIterator<Item = S>>(&mut self, source: I) -> Option<Self::Item>;
+
+    fn adapt<TS: IntoIterator<Item = S>>(self, source: TS) -> Adapts<Self, TS::IntoIter> {
+        Adapts {
+            adapter: self,
+            source: source.into_iter(),
+        }
+    }
+
+    fn new_adapted<TS: IntoIterator<Item = S>>(source: TS) -> Adapts<Self, TS::IntoIter>
+    where
+        Self: Default,
+    {
+        Self::default().adapt(source)
+    }
+}
+
+// === ControlFlowIter === //
+
+pub type UniControlFlow<T> = ControlFlow<T, T>;
+
+#[derive(Debug, Clone, Default)]
+pub struct ControlFlowIter {
+    finished: bool,
+}
+
+impl ControlFlowIter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<V> IteratorAdapterSingle<UniControlFlow<V>> for ControlFlowIter {
+    type Item = V;
+
+    fn next_single(&mut self, source: Option<UniControlFlow<V>>) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        match source {
+            Some(UniControlFlow::Continue(value)) => Some(value),
+            Some(UniControlFlow::Break(value)) => {
+                self.finished = true;
+                Some(value)
+            }
+            None => {
+                self.finished = true;
+                None
+            }
+        }
+    }
+}
+
+pub trait ControlFlowIterExt: Sized {
+    fn handle_control_flow(self) -> Adapts<ControlFlowIter, Self>;
+}
+
+impl<V, I: Iterator<Item = UniControlFlow<V>>> ControlFlowIterExt for I {
+    fn handle_control_flow(self) -> Adapts<ControlFlowIter, Self> {
+        ControlFlowIter::new_adapted(self)
+    }
+}
+
+// === ControlFlowIter conversions === //
+
+pub trait ToIterControlFlow: Sized {
+    type Item;
+
+    fn to_rep_flow(self) -> RepFlow<Self::Item>;
+
+    fn to_control_flow_option(self) -> Option<UniControlFlow<Self::Item>> {
+        match self.to_rep_flow() {
+            RepFlow::Break(value) => Some(UniControlFlow::Break(value)),
+            RepFlow::Continue(value) => Some(UniControlFlow::Continue(value)),
+            RepFlow::None => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum RepFlow<T> {
+    Break(T),
+    Continue(T),
+    None,
+}
+
+impl<T> ToIterControlFlow for RepFlow<T> {
+    type Item = T;
+
+    fn to_rep_flow(self) -> RepFlow<Self::Item> {
+        self
+    }
+}
+
+impl ToIterControlFlow for bool {
+    type Item = ();
+
+    fn to_rep_flow(self) -> RepFlow<Self::Item> {
+        match self {
+            true => RepFlow::Continue(()),
+            false => RepFlow::None,
+        }
+    }
+}
+
+impl<T> ToIterControlFlow for Option<T> {
+    type Item = T;
+
+    fn to_rep_flow(self) -> RepFlow<Self::Item> {
+        match self {
+            Some(value) => RepFlow::Continue(value),
+            None => RepFlow::None,
+        }
+    }
+}
+
+impl<T, E> ToIterControlFlow for Result<T, E> {
+    type Item = Self;
+
+    fn to_rep_flow(self) -> RepFlow<Self::Item> {
+        match self {
+            Ok(value) => RepFlow::Continue(Ok(value)),
+            Err(err) => RepFlow::Break(Err(err)),
+        }
+    }
+}
+
 // === TakeAt === //
 
 pub trait TakeAtExt: Sized + Iterator {
@@ -16,6 +177,7 @@ pub trait TakeAtExt: Sized + Iterator {
 
 impl<T: Sized + Iterator> TakeAtExt for T {}
 
+#[derive(Debug, Clone)]
 pub struct TakeAtIter<ISrc, IIdx> {
     min_idx: usize,
     iter_src: ISrc,
@@ -130,14 +292,4 @@ where
     T: Sized + Iterator,
     T::Item: Try,
 {
-}
-
-// === "Tests" === //
-
-#[test]
-fn swap_example() {
-    let mut elems = vec![1, 2, 3, 4];
-    let [a, b] = elems.iter_mut().collect_array();
-    std::mem::swap(a, b);
-    println!("{:?}", elems);
 }

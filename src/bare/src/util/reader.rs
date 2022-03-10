@@ -1,3 +1,4 @@
+use crate::util::iter_ext::{ControlFlowIter, IteratorAdapterSingle, RepFlow, ToIterControlFlow};
 use std::marker::PhantomData;
 
 // === Lookahead machinery === //
@@ -70,18 +71,22 @@ use std::marker::PhantomData;
 ///    a state before the turbo was matched?
 /// 2. The solution works worse with [match_choice] error building. [match_choice] can automatically
 ///    combine parse errors into one giant "unexpected <element>, expected <list of choices>" error
-///    message. Without this additional mechanism, users would have to extend this error message
-///    manually. In other words, while it may *feel* like a match closure is a terminal call, it
-///    oftentimes isn't; constructs like [match_choice] have to do additional processing of the
-///    returned result.
+///    message. Without using [match_choice] to handle a terminal branch, users would have to extend
+///    this error message manually. In other words, while it may *feel* like a match closure is a
+///    terminal call, it oftentimes isn't; constructs like [match_choice] have to do additional
+///    processing of the returned result.
 /// 3. Closure adapters like `with_impossible` and `impossible` don't work. Instead, users wanting to
 ///    parse a regular simple path without any extensions must manually handle the flag, which is more
 ///    work.
 /// 4. It breaks convention.
 ///
-/// Rather than try to make an abstract decision between composition and extension callbacks, users
-/// should compose *complete* matcher functions but fall back to extension callbacks where doing so
-/// is not possible.
+/// Rather than try to make an abstract decision between the semantics of composition and extension
+/// callbacks, users should always try to compose *complete* matcher functions but fall back to
+/// extension callbacks where doing so is not possible.
+///
+/// ## Error Semantics
+///
+/// TODO: Why users should not define an intent flag.
 ///
 /// ## Cursor Recovery
 ///
@@ -160,77 +165,20 @@ impl<T, E> LookaheadResult for Result<T, E> {
     }
 }
 
-// === Repetition matching === //
-
-/// A [RepeatResult] tells a [ConsumeWhileIter] whether it should continue iterating, return a final
-/// value, or finish without returning anything. This happens entirely independently from
-/// [LookaheadResult], which tells the iterator whether to keep result of an iteration.
-pub trait RepeatResult: Sized + LookaheadResult {
-    type RepeatRes;
-
-    /// Attempts to unwrap the result into the value returned by the iterator. The first element
-    /// of the tuple indicates whether to attempt to continue iterating. The iterator will stop
-    /// without emitting anything if the result is `None`.
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)>;
-}
-
-impl RepeatResult for bool {
-    type RepeatRes = ();
-
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        match self {
-            true => Some((true, ())),
-            false => None,
-        }
-    }
-}
-
-impl<T> RepeatResult for Option<T> {
-    type RepeatRes = T;
-
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        self.map(|value| (true, value))
-    }
-}
-
-impl<T, E> RepeatResult for Result<T, E> {
-    type RepeatRes = Result<T, E>;
-
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        match self {
-            Ok(value) => Some((true, Ok(value))),
-            Err(err) => Some((false, Err(err))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum RepFlow<T> {
-    Continue(T),
-    Finish(T),
-    Reject,
-}
-
 impl<T> LookaheadResult for RepFlow<T> {
     fn should_commit(&self) -> bool {
         match self {
-            Self::Reject => false,
+            RepFlow::None => false,
             _ => true,
         }
     }
 }
 
-impl<T> RepeatResult for RepFlow<T> {
-    type RepeatRes = T;
+// === Repetition matching === //
 
-    fn into_stream_result(self) -> Option<(bool, Self::RepeatRes)> {
-        match self {
-            Self::Continue(value) => Some((true, value)),
-            Self::Finish(value) => Some((false, value)),
-            Self::Reject => None,
-        }
-    }
-}
+pub trait RepeatResult: Sized + LookaheadResult + ToIterControlFlow {}
+
+impl<T: Sized + LookaheadResult + ToIterControlFlow> RepeatResult for T {}
 
 pub struct ConsumeWhileIter<'a, R, F, O>
 where
@@ -241,7 +189,7 @@ where
     _ty: PhantomData<fn() -> O>,
     handler: F,
     reader: &'a mut R,
-    finished: bool,
+    iter: ControlFlowIter,
 }
 
 impl<'a, R, F, O> ConsumeWhileIter<'a, R, F, O>
@@ -255,7 +203,7 @@ where
             _ty: PhantomData,
             handler,
             reader,
-            finished: false,
+            iter: ControlFlowIter::new(),
         }
     }
 }
@@ -264,25 +212,13 @@ impl<'a, R, F, O> Iterator for ConsumeWhileIter<'a, R, F, O>
 where
     R: LookaheadReader,
     F: FnMut(&mut R) -> O,
-    O: LookaheadResult + RepeatResult,
+    O: RepeatResult,
 {
-    type Item = <O as RepeatResult>::RepeatRes;
+    type Item = <O as ToIterControlFlow>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.finished {
-            return None;
-        }
-
         let res = self.reader.lookahead(&mut self.handler);
-
-        match res.into_stream_result() {
-            Some((true, res)) => Some(res),
-            Some((false, res)) => {
-                self.finished = true;
-                Some(res)
-            }
-            None => None,
-        }
+        self.iter.next_single(res.to_control_flow_option())
     }
 }
 
@@ -404,9 +340,6 @@ where
     fn_(arg)
 }
 
-#[doc(hidden)]
-pub fn helper_assert_equal_types<T: ?Sized>(_: &T, _: &T) {}
-
 pub macro match_choice {
     (
         $reader:expr,
@@ -438,11 +371,6 @@ pub macro match_choice {
                     // And lookahead
                     let fork_res = helper_call_closure(|$binding| $expr, &mut fork);
 
-                    // This hint tells Rust inference that errors and results are of the same type
-                    // so that we can call "extend_error" without inference issues.
-                    // TODO: Is this really necessary?
-                    helper_assert_equal_types(&error, &fork_res);
-
                     // Check if the pattern was matched successfully.
                     if LookaheadResult::should_commit(&fork_res) {
                         // If it was, ensure that it's not conflicting with anything else in the block.
@@ -473,12 +401,12 @@ pub macro match_choice {
 // === Generic stream machinery === //
 
 pub trait StreamReader: Sized {
-    type Res: StreamResult;
+    type Res: ToIterControlFlow;
 
     fn consume(&mut self) -> Self::Res;
 
     fn as_drain(&mut self) -> StreamDrain<'_, Self> {
-        StreamDrain { reader: self }
+        StreamDrain::new(self)
     }
 
     fn peek(&self) -> Self::Res
@@ -492,53 +420,33 @@ pub trait StreamReader: Sized {
     where
         Self: LookaheadReader,
     {
-        self.peek().is_present()
+        match self.peek().to_rep_flow() {
+            RepFlow::None => false,
+            _ => true,
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct StreamDrain<'a, R> {
     pub reader: &'a mut R,
+    state: ControlFlowIter,
+}
+
+impl<'a, R> StreamDrain<'a, R> {
+    pub fn new(reader: &'a mut R) -> Self {
+        Self {
+            reader,
+            state: Default::default(),
+        }
+    }
 }
 
 impl<'a, R: ?Sized + StreamReader> Iterator for StreamDrain<'a, R> {
-    type Item = <R::Res as StreamResult>::Item;
+    type Item = <R::Res as ToIterControlFlow>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.reader.consume().to_item()
-    }
-}
-
-pub trait StreamResult: Sized {
-    type Item;
-
-    fn to_item(self) -> Option<Self::Item>;
-
-    fn is_present(self) -> bool {
-        self.to_item().is_some()
-    }
-
-    fn is_end(self) -> bool {
-        self.to_item().is_none()
-    }
-}
-
-impl<T> StreamResult for Option<T> {
-    type Item = T;
-
-    fn to_item(self) -> Option<Self::Item> {
-        self
-    }
-}
-
-impl<T, E> StreamResult for Result<Option<T>, E> {
-    type Item = Result<T, E>;
-
-    fn to_item(self) -> Option<Self::Item> {
-        match self {
-            Ok(Some(success)) => Some(Ok(success)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
+        self.state
+            .next_single(self.reader.consume().to_control_flow_option())
     }
 }
