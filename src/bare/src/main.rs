@@ -1,8 +1,6 @@
 #![allow(dead_code)]
-#![feature(allocator_api)]
 #![feature(bool_to_option)]
 #![feature(build_hasher_simple_hash_one)]
-#![feature(coerce_unsized)]
 #![feature(decl_macro)]
 #![feature(int_log)]
 #![feature(maybe_uninit_array_assume_init)]
@@ -11,7 +9,6 @@
 #![feature(never_type)]
 #![feature(str_internals)]
 #![feature(try_trait_v2)]
-#![feature(unsize)]
 
 pub mod semantic;
 pub mod syntax;

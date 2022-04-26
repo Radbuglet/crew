@@ -5,7 +5,7 @@ use crate::syntax::ast::util::{
 };
 use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
 use crate::util::iter_ext::RepFlow;
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
+use crate::util::reader::{DelimiterMatcher, LookaheadReader};
 
 // === Shared === //
 
@@ -19,16 +19,16 @@ pub enum AstPathRoot {
 
 impl AstPathRoot {
     pub fn parse((_cx, reader): AstCx) -> Self {
-        match_choice!(
-            reader,
+        reader
+            .branch()
             // Absolute
-            |reader| util_match_turbo(reader).and(Some(Self::Absolute)),
+            .case(|reader| util_match_turbo(reader).and(Some(Self::Absolute)))
             // Self
-            |reader| util_match_specific_kw(reader, AstKeyword::Self_).and(Some(Self::Self_)),
+            .case(|reader| util_match_specific_kw(reader, AstKeyword::Self_).and(Some(Self::Self_)))
             // Crate
-            |reader| util_match_specific_kw(reader, AstKeyword::Crate).and(Some(Self::Crate)),
-        )
-        .unwrap_or(Self::Unspecified)
+            .case(|reader| util_match_specific_kw(reader, AstKeyword::Crate).and(Some(Self::Crate)))
+            .done()
+            .unwrap_or(Self::Unspecified)
     }
 
     pub fn expects_turbo(self) -> bool {
@@ -49,12 +49,14 @@ pub enum AstPathPart {
 
 impl AstPathPart {
     pub fn parse((_cx, reader): AstCx) -> Option<Self> {
-        match_choice!(
-            reader,
+        reader
+            .branch()
             // Match super literal
-            |reader| util_match_specific_kw(reader, AstKeyword::Super).and(Some(Self::Super(1))),
+            .case(|reader| {
+                util_match_specific_kw(reader, AstKeyword::Super).and(Some(Self::Super(1)))
+            })
             // Match super carets
-            |reader| {
+            .case(|reader| {
                 let caret_count = reader
                     .consume_while(|reader| {
                         util_match_punct(reader, PunctChar::Caret, None).is_some()
@@ -66,13 +68,13 @@ impl AstPathPart {
                 } else {
                     None
                 }
-            },
+            })
             // Match literal
-            |reader| match util_match_ident_or_kw(reader) {
+            .case(|reader| match util_match_ident_or_kw(reader) {
                 Some(IdentOrKw { raw, kw: None }) => Some(Self::Lit(raw.text())),
                 _ => None,
-            },
-        )
+            })
+            .done()
     }
 }
 
@@ -190,11 +192,12 @@ impl AstPathNode {
                 Part(AstPathPart),
             }
 
-            match match_choice!(
-                reader,
-                |reader| Some(Matched::Terminator(AstPathTerminator::parse((cx, reader))?)),
-                |reader| Some(Matched::Part(AstPathPart::parse((cx, reader))?)),
-            ) {
+            match reader
+                .branch()
+                .case(|reader| Some(Matched::Terminator(AstPathTerminator::parse((cx, reader))?)))
+                .case(|reader| Some(Matched::Part(AstPathPart::parse((cx, reader))?)))
+                .done()
+            {
                 Some(Matched::Terminator(matched)) => {
                     terminator = matched;
                     RepFlow::Break(())
@@ -221,10 +224,10 @@ pub enum AstPathTerminator {
 
 impl AstPathTerminator {
     pub fn parse((cx, reader): AstCx) -> Option<Self> {
-        match_choice!(
-            reader,
+        reader
+            .branch()
             // Rename
-            |reader| {
+            .case(|reader| {
                 let real_id = util_match_ident(reader)?;
                 util_match_specific_kw(reader, AstKeyword::As)?;
                 let target_id = util_match_ident(reader)?;
@@ -233,38 +236,41 @@ impl AstPathTerminator {
                     target: real_id.text(),
                     rename: target_id.text(),
                 })
-            },
+            })
             // Tree
-            |reader| if let Some(group) = util_match_group_delimited(reader, GroupDelimiter::Brace)
-            {
-                let mut reader = group.reader();
-                let mut nodes = Vec::new();
+            .case(|reader| {
+                if let Some(group) = util_match_group_delimited(reader, GroupDelimiter::Brace) {
+                    let mut reader = group.reader();
+                    let mut nodes = Vec::new();
 
-                // Match interior list
-                let mut delimited =
-                    DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
+                    // Match interior list
+                    let mut delimited =
+                        DelimiterMatcher::new_start(util_punct_matcher(PunctChar::Comma));
 
-                while let Some(_) = delimited.next(&mut reader) {
-                    // The node is optional (e.g. for trailing commas)
-                    if let Some(node) = AstPathNode::parse((cx, &mut reader), false) {
-                        nodes.push(node);
+                    while let Some(_) = delimited.next(&mut reader) {
+                        // The node is optional (e.g. for trailing commas)
+                        if let Some(node) = AstPathNode::parse((cx, &mut reader), false) {
+                            nodes.push(node);
+                        }
                     }
+
+                    // Match inner group EOF
+                    util_match_eof(&mut reader)?;
+
+                    Some(Self::Tree(nodes))
+                } else {
+                    None
                 }
-
-                // Match inner group EOF
-                util_match_eof(&mut reader)?;
-
-                Some(Self::Tree(nodes))
-            } else {
-                None
-            },
+            })
             // Wildcard
-            |reader| if util_match_punct(reader, PunctChar::Asterisk, None).is_some() {
-                Some(Self::Wildcard)
-            } else {
-                None
-            }
-        )
+            .case(|reader| {
+                if util_match_punct(reader, PunctChar::Asterisk, None).is_some() {
+                    Some(Self::Wildcard)
+                } else {
+                    None
+                }
+            })
+            .done()
     }
 }
 

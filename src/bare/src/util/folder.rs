@@ -166,7 +166,7 @@ pub trait Folder {
         FolderReader::new(self.proceeding(), self.next_pos())
     }
 
-    fn lookahead<'a, F, R>(&'a mut self, fn_: F) -> R
+    fn peek<'a, F, R>(&'a mut self, fn_: F) -> R
     where
         F: FnOnce(&mut FolderReader<'a, Self::Item>) -> R,
     {
@@ -546,7 +546,7 @@ fn test_equation() {
 
     fn fold_bin_op<F: Folder<Item = Atom>>(folder: &mut F, ops: &[BinOp]) {
         while folder.has_remaining() {
-            if let Some((lhs, op, rhs)) = folder.lookahead(|reader| {
+            if let Some((lhs, op, rhs)) = folder.peek(|reader| {
                 let lhs = match reader.consume_loc() {
                     Some((Atom::Expr(_), pos)) => pos,
                     _ => return None,

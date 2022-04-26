@@ -1,110 +1,13 @@
 use crate::util::iter_ext::{ControlFlowIter, IteratorAdapterSingle, RepFlow, ToIterControlFlow};
+use std::cmp::Ordering;
 use std::marker::PhantomData;
 
 // === Lookahead machinery === //
 
-/// Readers are cursors which allow users to procedurally match a grammar. [LookaheadReaders] are
+/// Readers are cursors which allow users to procedurally match a grammar. `LookaheadReaders` are
 /// special because they allow users to fork the cursor and "look-ahead" an arbitrary number of
 /// elements to see if the grammar matches.
-///
-/// **Match functions** are functions which take in a `LookaheadReader` (also known as a "cursor") and
-/// produce an abstract-syntax-tree representation of that grammar, mapping fairly well to the notion
-/// of [production rules]. However, match functions have one important additional responsibility. In
-/// theory, while the entire grammar of a language could be built up of silently matching production
-/// rules with the validity of the root-most rule determining whether the program is valid, the user
-/// would loose context as to why their syntax was invalid. Thus, match functions have the additional
-/// responsibility of yielding appropriate diagnostic messages on a grammar mismatch, and recovering
-/// to a safer state to continue parsing.
-///
-/// ## Extension Callbacks
-///
-/// This additional responsibility complicates matters when there is overlap between a match function's
-/// grammatical requirements and the grammatical capabilities of subsequent match functions. Consider,
-/// for example, the following syntax:
-///
-/// ```no_run
-/// use foo::bar::baz::{elem_1, elem_2};
-///
-/// fn my_func() -> u32 {
-///      maz::laz::SOME_STATIC + 5
-/// }
-/// ```
-///
-/// There are two contexts in which a path (the `foo::bar::baz` syntax alone) can be used: a `use`
-/// item where each path can be ended with a `"::" + <terminator>` and in expressions where this is
-/// not possible. It's tempting to construct a match function that just matches this first "simple path"
-/// part and then compose that with another function to match the optional terminator, however doing
-/// so complicates diagnostic handling.
-///
-/// In a non-composed implementation of a path tree parser, we could say that turbo (`::`) delimiters
-/// must be followed by either a non-keyword identifier or a braced group of nested paths. In the
-/// composed context where we concatenate simple `$(part:ident)::*` matching behavior with the optional
-/// `$(:: $terminator:PathTree)?` syntax extension, we introduce a grammatical overlap as the simple
-/// parser must now ignore incomplete turbos to allow subsequent matchers to handle them. While this
-/// shouldn't have enabled any new illegal grammar (otherwise, the grammar would have been ambiguous),
-/// the diagnostics become much less contextual:
-///
-/// ```no_run
-///  use foo::bar::baz::;
-///  //               ^ the error is technically the **simple path** not being followed by a `:: + {<path list>}` or a `;`.
-///  //                 ^ however, the actual error is that **turbos** can either be followed by a `;` or a `{<path list>}`.
-///
-/// static val foo: bar::baz:: = ...;
-/// //                      ^ the error is technically the simple path not being followed by a `=` or `;`
-/// //                         ^ however, the error is intuitively the lack of an identifier after the turbo.
-/// ```
-///
-/// To fix this, matcher functions can take matcher closures to extend their grammar. In this case,
-/// the `match_simple_path` can accept a closure taking a mutable [LookaheadReader] reference, which
-/// can provide an additional way to match an unclosed terminator. This both enables the primary
-/// function to detect illegal terminators (since the closure could produce the appropriate error in
-/// the correct context) and would allow the grammar extensions to work off context from the parent
-/// function which would have otherwise been discarded.
-///
-/// Extension callbacks are preferred, even when users could pass along the terminal state as a
-/// return value, because this alternative method introduces additional complexity:
-///
-/// 1. The solution works worse with [LookaheadReader::lookahead]. Regular match methods either
-///    commit the successful lookahead state or reject it. However, this alternative approach to the
-///    "simple path" parser leaves some ambiguity up in the air. Should it commit the trailing turbo
-///    or not? If it doesn't, it could force users to redo work. If it did, how could users return to
-///    a state before the turbo was matched?
-/// 2. The solution works worse with [match_choice] error building. [match_choice] can automatically
-///    combine parse errors into one giant "unexpected <element>, expected <list of choices>" error
-///    message. Without using [match_choice] to handle a terminal branch, users would have to extend
-///    this error message manually. In other words, while it may *feel* like a match closure is a
-///    terminal call, it oftentimes isn't; constructs like [match_choice] have to do additional
-///    processing of the returned result.
-/// 3. Closure adapters like `with_impossible` and `impossible` don't work. Instead, users wanting to
-///    parse a regular simple path without any extensions must manually handle the flag, which is more
-///    work.
-/// 4. It breaks convention.
-///
-/// Rather than try to make an abstract decision between the semantics of composition and extension
-/// callbacks, users should always try to compose *complete* matcher functions but fall back to
-/// extension callbacks where doing so is not possible.
-///
-/// ## Error Semantics
-///
-/// TODO: Why users should not define an intent flag.
-///
-/// ## Cursor Recovery
-///
-/// Because of the heavyweight nature of compilers, it is better for the users if parsers can recover
-/// from certain classes of syntax errors and continue parsing so that the compiler can emit and users
-/// can address as many diagnostics as possible at once.
-///
-/// When a match function detects a potential syntax error that a) it knows cannot be matched by other
-/// functions and b) can reasonably recover from, it is encouraged to skip the offending grammar to
-/// put the cursor back into a valid state, produce an AST fragment such that the lookahead accepts
-/// the result as a "successful parse", and push its errors to a passive diagnostic reporter.
-///
-/// TODO: Add a way to limit lookahead using a wrapper (e.g. a lookahead_limited method)?
-///
-/// [LookaheadReaders]: LookaheadReader
-/// [production rules]: https://en.wikipedia.org/wiki/Production_(computer_science)
-/// [lookahead]: LookaheadReader::lookahead
-pub trait LookaheadReader: Clone {
+pub trait LookaheadReader: Sized + Clone {
     /// Attempts to match the reader sequence using the handler, committing the state if the return
     /// value is truthy (*e.g.* `true`, `Some(_)`, `Ok(_)`; see [LookaheadResult] for details) and
     /// ignoring all reader state changes otherwise.
@@ -136,9 +39,16 @@ pub trait LookaheadReader: Clone {
     fn consume_while<F, R>(&mut self, handler: F) -> ConsumeWhileIter<Self, F, R>
     where
         F: FnMut(&mut Self) -> R,
-        R: LookaheadResult + RepeatResult,
+        R: RepeatResult,
     {
         ConsumeWhileIter::new(self, handler)
+    }
+
+    fn branch<T>(&mut self) -> ChoiceMatcher<Self, T>
+    where
+        T: LookaheadResult + ErrorAccumulator,
+    {
+        ChoiceMatcher::new(self)
     }
 }
 
@@ -184,7 +94,7 @@ pub struct ConsumeWhileIter<'a, R, F, O>
 where
     R: LookaheadReader,
     F: FnMut(&mut R) -> O,
-    O: LookaheadResult + RepeatResult,
+    O: RepeatResult,
 {
     _ty: PhantomData<fn() -> O>,
     handler: F,
@@ -196,7 +106,7 @@ impl<'a, R, F, O> ConsumeWhileIter<'a, R, F, O>
 where
     R: LookaheadReader,
     F: FnMut(&mut R) -> O,
-    O: LookaheadResult + RepeatResult,
+    O: RepeatResult,
 {
     pub fn new(reader: &'a mut R, handler: F) -> Self {
         Self {
@@ -226,7 +136,7 @@ impl<'a, R, F, O> Drop for ConsumeWhileIter<'a, R, F, O>
 where
     R: LookaheadReader,
     F: FnMut(&mut R) -> O,
-    O: LookaheadResult + RepeatResult,
+    O: RepeatResult,
 {
     fn drop(&mut self) {
         for _ in self {}
@@ -253,8 +163,6 @@ where
         }
     }
 }
-
-impl<Reader, FDel, Res> LookaheadReader for DelimiterMatcher<Reader, FDel, Res> where FDel: Clone {}
 
 impl<Reader, FDel, Res> DelimiterMatcher<Reader, FDel, Res>
 where
@@ -331,70 +239,63 @@ impl<T, E: ErrorAccumulator> ErrorAccumulator for Result<T, E> {
     }
 }
 
-// ...not sure why this is needed but type inference prefers it so ¯\_(ツ)_/¯
-#[doc(hidden)]
-pub fn helper_call_closure<F, A, R>(fn_: F, arg: A) -> R
-where
-    F: FnOnce(A) -> R,
-{
-    fn_(arg)
+#[derive(Debug)]
+#[must_use]
+pub struct ChoiceMatcher<'a, R, T> {
+    reader: &'a mut R,
+    state: ChoiceMatcherState,
+    result: T,
 }
 
-pub macro match_choice {
-    (
-        $reader:expr,
-        $(|$binding:ident| $expr:expr),*$(,)?
-    ) => {
-        match_choice!($reader, [$(|$binding| $expr),*])
-    },
-    (
-        $reader:expr,
-        $([
-            $(|$binding:ident| $expr:expr),*$(,)?
-        ]),*$(,)?
-    ) => {
-        // This loop allows us to short-circuit early if one of the inner groups succeeds.
-        loop {
-            let reader = $reader;
-            let mut error = ErrorAccumulator::empty_error();
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+enum ChoiceMatcherState {
+    Passed,
+    Barred,
+    Failing,
+}
 
-            // For every atomic block...
-            $({
-                // Keep track of the current successes.
-                let mut result = None;
-
-                // For every pattern...
-                $({
-                    // Fork the reader
-                    let mut fork = Clone::clone(reader);
-
-                    // And lookahead
-                    let fork_res = helper_call_closure(|$binding| $expr, &mut fork);
-
-                    // Check if the pattern was matched successfully.
-                    if LookaheadResult::should_commit(&fork_res) {
-                        // If it was, ensure that it's not conflicting with anything else in the block.
-                        debug_assert!(result.is_none(), "Ambiguous pattern!");
-
-                        // And mark this as the one result to be returned at the end of the block if
-                        // everything goes to plan.
-                        result = Some((fork, fork_res));
-                    } else {
-                        // Otherwise, extend the error.
-                        ErrorAccumulator::extend_error(&mut error, fork_res);
-                    }
-                })*
-
-                // If we matched anything in the block, commit the reader and return it.
-                if let Some((fork, result)) = result {
-                    *reader = fork;
-                    break result;
-                }
-            })*
-
-            // If none of the blocks ever matched, return an accumulated error.
-            break error;
+impl<'a, R, T> ChoiceMatcher<'a, R, T>
+where
+    R: LookaheadReader,
+    T: ErrorAccumulator + LookaheadResult,
+{
+    pub fn new(reader: &'a mut R) -> Self {
+        Self {
+            reader,
+            state: ChoiceMatcherState::Failing,
+            result: T::empty_error(),
         }
+    }
+
+    pub fn case<F>(mut self, handler: F) -> Self
+    where
+        F: FnOnce(&mut R) -> T,
+    {
+        if self.state == ChoiceMatcherState::Barred {
+            return self;
+        }
+
+        let result = self.reader.lookahead(handler);
+        if result.should_commit() {
+            debug_assert_eq!(self.state, ChoiceMatcherState::Failing);
+            self.result = result;
+            self.state = ChoiceMatcherState::Passed;
+        } else {
+            self.result.extend_error(result);
+        }
+
+        self
+    }
+
+    pub fn barrier(mut self) -> Self {
+        if self.state == ChoiceMatcherState::Passed {
+            self.state = ChoiceMatcherState::Barred;
+        }
+        self
+    }
+
+    pub fn done(self) -> T {
+        self.result
     }
 }
 
@@ -414,16 +315,6 @@ pub trait StreamReader: Sized {
         Self: LookaheadReader,
     {
         self.clone().consume()
-    }
-
-    fn has_remaining(&self) -> bool
-    where
-        Self: LookaheadReader,
-    {
-        match self.peek().to_rep_flow() {
-            RepFlow::None => false,
-            _ => true,
-        }
     }
 }
 
@@ -448,5 +339,108 @@ impl<'a, R: ?Sized + StreamReader> Iterator for StreamDrain<'a, R> {
     fn next(&mut self) -> Option<Self::Item> {
         self.state
             .next_single(self.reader.consume().to_control_flow_option())
+    }
+}
+
+// === Location tracking === //
+
+pub trait FileLoc: Ord {}
+
+pub trait LocatedReader {
+    type Loc: FileLoc;
+
+    fn prev_loc(&self) -> Self::Loc;
+    fn next_loc(&self) -> Self::Loc;
+}
+
+// === Unstuck tracking === //
+
+#[derive(Debug, Clone)]
+pub struct UnstuckReporter<L, E> {
+    expectations: Option<(L, Vec<E>)>,
+}
+
+impl<L, E> Default for UnstuckReporter<L, E> {
+    fn default() -> Self {
+        Self { expectations: None }
+    }
+}
+
+impl<L, E> UnstuckReporter<L, E> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<L: FileLoc, E> UnstuckReporter<L, E> {
+    pub fn push_expectation(&mut self, loc: L, expectation: E) {
+        let (latest_loc, expectations) = match &mut self.expectations {
+            Some(expectation) => expectation,
+            None => {
+                self.expectations = Some((loc, vec![expectation]));
+                return;
+            }
+        };
+
+        match (&*latest_loc).cmp(&loc) {
+            Ordering::Less => {
+                *latest_loc = loc;
+                expectations.clear();
+                expectations.push(expectation);
+            }
+            Ordering::Equal => {
+                expectations.push(expectation);
+            }
+            Ordering::Greater => {
+                // (no op)
+            }
+        }
+    }
+
+    pub fn pad_expectation(&mut self, loc: L) {
+        let (latest_loc, expectations) = match &mut self.expectations {
+            Some(expectation) => expectation,
+            None => {
+                self.expectations = Some((loc, Vec::new()));
+                return;
+            }
+        };
+
+        if &*latest_loc < &loc {
+            *latest_loc = loc;
+            expectations.clear();
+        }
+    }
+
+    pub fn expectations(&self) -> (Option<&L>, &[E]) {
+        match &self.expectations {
+            Some((loc, expectations)) => (Some(loc), expectations.as_slice()),
+            None => (None, &[]),
+        }
+    }
+}
+
+pub trait UnstuckReader: LocatedReader {
+    type Error;
+
+    fn reporter(&self) -> &UnstuckReporter<Self::Loc, Self::Error>;
+    fn reporter_mut(&mut self) -> &mut UnstuckReporter<Self::Loc, Self::Error>;
+
+    fn expecting(&mut self, expectation: Self::Error) {
+        let loc = self.next_loc();
+        self.expecting_at(loc, expectation);
+    }
+
+    fn expecting_at(&mut self, loc: Self::Loc, expectation: Self::Error) {
+        self.reporter_mut().push_expectation(loc, expectation);
+    }
+
+    fn pad_expecting(&mut self) {
+        let loc = self.next_loc();
+        self.pad_expecting_at(loc);
+    }
+
+    fn pad_expecting_at(&mut self, loc: Self::Loc) {
+        self.reporter_mut().pad_expectation(loc);
     }
 }

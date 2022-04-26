@@ -18,7 +18,7 @@ use crate::syntax::token::ir::{
 use crate::util::backing::Captures;
 use crate::util::enum_utils::{enum_categories, EnumMeta, VariantOf};
 use crate::util::iter_ext::RepFlow;
-use crate::util::reader::{match_choice, LookaheadReader, StreamReader};
+use crate::util::reader::{LookaheadReader, StreamReader};
 use std::fmt::Display;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -557,12 +557,12 @@ pub fn group_match_number_lit(
         // Read exponents
         let exp_part = if match_str(reader, "E") {
             // Match sign (optional)
-            let is_positive = match_choice!(
-                &mut *reader,
-                |reader| match_str(reader, "+").then_some(true),
-                |reader| match_str(reader, "-").then_some(false),
-            )
-            .unwrap_or(true);
+            let is_positive = reader
+                .branch()
+                .case(|reader| match_str(reader, "+").then_some(true))
+                .case(|reader| match_str(reader, "-").then_some(false))
+                .done()
+                .unwrap_or(true);
 
             // Match digits
             let digits = tokenize_read_digits(reader, &DIGITS_DECIMAL).collect::<String>();

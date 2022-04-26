@@ -1,4 +1,3 @@
-pub mod alloc;
 pub mod backing;
 pub mod disjoint_set;
 pub mod enum_utils;

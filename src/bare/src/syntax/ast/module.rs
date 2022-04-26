@@ -6,7 +6,7 @@ use crate::syntax::ast::util::{
 };
 use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
-use crate::util::reader::{match_choice, LookaheadReader};
+use crate::util::reader::LookaheadReader;
 
 #[derive(Debug, Clone)]
 pub struct AstModule {
@@ -78,12 +78,12 @@ enum_categories! {
 
 impl AstModItemKind {
     pub fn parse((cx, reader): AstCx) -> Option<Self> {
-        match_choice!(
-            reader,
-            |reader| Some(AstModModule::parse((cx, reader))?.wrap()),
-            |reader| Some(AstModBlock::parse((cx, reader))?.wrap()),
-            |reader| Some(AstModUse::parse((cx, reader))?.wrap()),
-        )
+        reader
+            .branch()
+            .case(|reader| Some(AstModModule::parse((cx, reader))?.wrap()))
+            .case(|reader| Some(AstModBlock::parse((cx, reader))?.wrap()))
+            .case(|reader| Some(AstModUse::parse((cx, reader))?.wrap()))
+            .done()
     }
 }
 
@@ -171,10 +171,10 @@ enum_categories! {
 
 impl AstModQualifier {
     pub fn parse((cx, reader): AstCx) -> Option<Self> {
-        match_choice!(
-            reader,
-            |reader| Some(AstVisQualifier::parse((cx, reader))?.wrap()),
-            |reader| Some(AstAttrQualifier::parse((cx, reader))?.wrap())
-        )
+        reader
+            .branch()
+            .case(|reader| Some(AstVisQualifier::parse((cx, reader))?.wrap()))
+            .case(|reader| Some(AstAttrQualifier::parse((cx, reader))?.wrap()))
+            .done()
     }
 }

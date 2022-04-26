@@ -23,19 +23,19 @@ pub struct AstCxBundle {
 // === Primitive token matching === //
 
 pub fn util_match_group<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenGroup> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenGroup>()?))
+    reader.lookahead(|reader| Some(reader.consume().ok()?.try_cast_ref::<TokenGroup>()?))
 }
 
 pub fn util_match_str_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenStringLit> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenStringLit>()?))
+    reader.lookahead(|reader| Some(reader.consume().ok()?.try_cast_ref::<TokenStringLit>()?))
 }
 
 pub fn util_match_num_lit<'a>(reader: &mut TokenStreamReader<'a>) -> Option<&'a TokenNumberLit> {
-    reader.lookahead(|reader| Some(reader.consume()?.try_cast_ref::<TokenNumberLit>()?))
+    reader.lookahead(|reader| Some(reader.consume().ok()?.try_cast_ref::<TokenNumberLit>()?))
 }
 
 pub fn util_match_eof(reader: &mut TokenStreamReader) -> Option<()> {
-    reader.lookahead(|reader| reader.consume().is_none().then_some(()))
+    reader.lookahead(|reader| reader.consume().is_err().then_some(()))
 }
 
 pub fn util_match_group_delimited<'a>(
@@ -56,7 +56,7 @@ pub fn util_match_punct<'a>(
     glued: Option<bool>,
 ) -> Option<&'a TokenPunct> {
     reader.lookahead(|reader| {
-        let punct = reader.consume()?.try_cast_ref::<TokenPunct>()?;
+        let punct = reader.consume().ok()?.try_cast_ref::<TokenPunct>()?;
         if punct.char == char && glued.map_or(true, |expected| expected == punct.is_glued) {
             Some(punct)
         } else {
@@ -272,7 +272,7 @@ pub fn util_decode_keyword(name: &str) -> Option<AstKeyword> {
 
 pub fn util_match_ident_or_kw<'a>(reader: &mut TokenStreamReader<'a>) -> Option<IdentOrKw<'a>> {
     reader.lookahead(|reader| {
-        let raw = reader.consume()?.try_cast_ref::<TokenIdent>()?;
+        let raw = reader.consume().ok()?.try_cast_ref::<TokenIdent>()?;
         let kw = util_decode_keyword(raw.text.as_str());
         Some(IdentOrKw { raw, kw })
     })
@@ -294,7 +294,7 @@ pub fn util_match_specific_kw<'a>(
     kw: AstKeyword,
 ) -> Option<&'a Span> {
     reader.lookahead(|reader| {
-        let ident = reader.consume()?.try_cast_ref::<TokenIdent>()?;
+        let ident = reader.consume().ok()?.try_cast_ref::<TokenIdent>()?;
         if ident.text == *kw.meta() {
             Some(&ident.span)
         } else {

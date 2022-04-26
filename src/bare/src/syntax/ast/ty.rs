@@ -5,7 +5,7 @@ use crate::syntax::ast::util::{
 };
 use crate::syntax::token::ir::{GroupDelimiter, PunctChar};
 use crate::util::enum_utils::{enum_categories, VariantOf};
-use crate::util::reader::{match_choice, DelimiterMatcher, LookaheadReader};
+use crate::util::reader::{DelimiterMatcher, LookaheadReader};
 
 enum_categories! {
     #[derive(Debug, Clone)]
@@ -18,12 +18,12 @@ enum_categories! {
 
 impl AstType {
     pub fn parse((cx, reader): AstCx) -> Option<Self> {
-        match_choice!(
-            reader,
-            |reader| Some(AstTypeObj::parse((cx, reader))?.wrap()),
-            |reader| Some(AstTypeTuple::parse((cx, reader))?.wrap()),
-            |reader| Some(AstTypeNever::parse((cx, reader))?.wrap()),
-        )
+        reader
+            .branch()
+            .case(|reader| Some(AstTypeObj::parse((cx, reader))?.wrap()))
+            .case(|reader| Some(AstTypeTuple::parse((cx, reader))?.wrap()))
+            .case(|reader| Some(AstTypeNever::parse((cx, reader))?.wrap()))
+            .done()
     }
 }
 
@@ -85,10 +85,10 @@ impl AstTypeObjGenerics {
     pub fn parse_param((cx, reader): AstCx) -> Option<GenericParamKind> {
         // N.B. we match named in a higher priority group than unnamed because the unnamed grammar
         // is a partial subset of named but not vice-versa.
-        match_choice!(
-            reader,
-            // Match named
-            [|reader| {
+        reader
+            .branch()
+            //> Match named
+            .case(|reader| {
                 // Match param name
                 let name = util_match_ident(reader)?;
 
@@ -99,10 +99,11 @@ impl AstTypeObjGenerics {
                 let ty = AstType::parse((cx, reader))?;
 
                 Some(GenericParamKind::Named(name.text(), ty))
-            }],
-            // Match unnamed
-            [|reader| { Some(GenericParamKind::Unnamed(AstType::parse((cx, reader))?)) }],
-        )
+            })
+            //> Match unnamed
+            .barrier()
+            .case(|reader| Some(GenericParamKind::Unnamed(AstType::parse((cx, reader))?)))
+            .done()
     }
 }
 
