@@ -1,0 +1,8 @@
+[package]
+name = "crew"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bumpalo = "3.13.0"
+unicode-xid = "0.2.4"
