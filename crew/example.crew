@@ -1,8 +1,5 @@
-struct Whee {
-	foo: u32,  // This is a really cool comment!
-	bar: i32,
-}
-
-fn whee(a: u32, b: i32) -> i32 {
-
+fn fib(n: u32) {
+	let mut dpo: u32 = {
+		let mut waz;
+	};
 }

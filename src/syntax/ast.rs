@@ -9,6 +9,8 @@ use super::token::{
 
 // === IR === //
 
+// FIXME: Ensure that bump allocated values are actually dropped if they need it.
+
 #[derive(Debug, Clone)]
 pub struct AstModule<'a> {
     pub items: &'a [AstModuleItem<'a>],
@@ -42,11 +44,11 @@ pub struct AstFunc<'a> {
     pub name: &'a str,
     pub params: &'a [&'a AstFieldLike<'a>],
     pub ret: Option<&'a AstType<'a>>,
-    pub body: (),
+    pub body: &'a AstBlock<'a>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AstFuncBlock<'a> {
+pub struct AstBlock<'a> {
     pub stmts: &'a [AstStmt<'a>],
 }
 
@@ -60,8 +62,9 @@ pub enum AstStmt<'a> {
 #[derive(Debug, Clone)]
 pub struct AstStmtDeclVar<'a> {
     pub name: &'a str,
-    pub ty: &'a AstType<'a>,
-    pub init: AstExpr<'a>,
+    pub is_mut: bool,
+    pub ty: Option<&'a AstType<'a>>,
+    pub init: Option<AstExpr<'a>>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,17 +75,53 @@ pub struct AstStmtSetVar<'a> {
 
 #[derive(Debug, Clone)]
 pub enum AstExpr<'a> {
-    Foo(&'a str),
+    BinOp(AstExprBinOp<'a>),
+    UnOp(AstExprUnOp<'a>),
+    Block(&'a AstBlock<'a>),
+    Paren(&'a AstExpr<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub struct AstExprBinOp<'a> {
+    pub left: &'a AstExpr<'a>,
+    pub right: &'a AstExpr<'a>,
+    pub operator: AstExprBinOperator,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AstExprBinOperator {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Xor,
+    Or,
+    And,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstExprUnOp<'a> {
+    pub target: &'a AstExpr<'a>,
+    pub operator: AstExprUnOperator,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AstExprUnOperator {
+    Neg,
 }
 
 // === Parser === //
 
 fn is_reserved(id: &str) -> bool {
-    matches!(id, "struct" | "fn")
+    matches!(
+        id,
+        "struct" | "fn" | "let" | "loop" | "if" | "break" | "return" | "mut"
+    )
 }
 
 fn match_keyword(kw: &'static str) -> impl Fn(&mut TokenCursor<'_>) -> bool {
-    assert!(is_reserved(kw));
+    assert!(is_reserved(kw), "{kw} is not a reserved keyword!");
 
     move |c| {
         c.lookahead(|c| {
@@ -191,11 +230,13 @@ pub fn parse_module<'a>(
 				return Err(p.unexpected(TokenUnexpectedFmt));
 			};
 
+            let body = parse_block(bump, &mut body.parser())?;
+
             items.push(AstModuleItem::Func(bump.alloc(AstFunc {
                 name: name.name,
                 params,
                 ret,
-                body: (),
+                body,
             })));
 
             continue;
@@ -254,4 +295,74 @@ pub fn parse_type<'a>(bump: &'a Bump, p: &mut TokenParser<'a>) -> TokenResult<'a
 	};
 
     Ok(bump.alloc(AstType { name: ident.name }))
+}
+
+pub fn parse_block<'a>(
+    bump: &'a Bump,
+    p: &mut TokenParser<'a>,
+) -> TokenResult<'a, &'a AstBlock<'a>> {
+    let mut stmts = Vec::new();
+    loop {
+        if p.expecting("}").try_match(|c| c.consume().is_none()) {
+            break;
+        }
+
+        if let Some(stmt) = parse_pure_stmt(bump, p)? {
+            stmts.push(stmt);
+            continue;
+        }
+    }
+
+    Ok(bump.alloc(AstBlock {
+        stmts: bump.alloc_slice_clone(&stmts),
+    }))
+}
+
+pub fn parse_pure_stmt<'a>(
+    bump: &'a Bump,
+    p: &mut TokenParser<'a>,
+) -> TokenResult<'a, Option<AstStmt<'a>>> {
+    if p.expecting("let").try_match(match_keyword("let")) {
+        let is_mut = p.expecting("mut").try_match(match_keyword("mut"));
+
+        let Some(name) = p.expecting("variable name").try_match_hinted(match_ident) else {
+			return Err(p.unexpected(TokenUnexpectedFmt));
+		};
+
+        let ty = if p.expecting(":").try_match(match_punct(':')) {
+            Some(parse_type(bump, p)?)
+        } else {
+            None
+        };
+
+        let init = if p.expecting("=").try_match(match_punct('=')) {
+            Some(parse_expr(bump, p)?)
+        } else {
+            None
+        };
+
+        if !p.expecting(";").try_match(match_punct(';')) {
+            return Err(p.unexpected(TokenUnexpectedFmt));
+        }
+
+        return Ok(Some(AstStmt::DeclVar(bump.alloc(AstStmtDeclVar {
+            name: name.name,
+            is_mut,
+            ty,
+            init,
+        }))));
+    }
+
+    Ok(None)
+}
+
+pub fn parse_expr<'a>(bump: &'a Bump, p: &mut TokenParser<'a>) -> TokenResult<'a, AstExpr<'a>> {
+    if let Some(group) = p
+        .expecting("{")
+        .try_match(match_group(GroupDelimiter::Brace))
+    {
+        return Ok(AstExpr::Block(parse_block(bump, &mut group.parser())?));
+    }
+
+    Err(p.unexpected(TokenUnexpectedFmt))
 }
