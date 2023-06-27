@@ -1,5 +1,9 @@
 fn fib(n: u32) {
-	let mut dpo: u32 = {
-		let mut waz;
-	};
+	let mut a = zero;
+	let mut b = zero;
+	let mut i = zero;
+
+	while i < n {
+//		a += one;
+	}
 }

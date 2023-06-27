@@ -1,6 +1,6 @@
 use bumpalo::Bump;
 
-use crate::util::parser::{Cursor, StreamCursor};
+use crate::util::parser::{Cursor, ParseError, StreamCursor};
 
 use super::token::{
     GroupDelimiter, TokenCursor, TokenGroup, TokenHinter, TokenIdent, TokenParser, TokenResult,
@@ -55,7 +55,7 @@ pub struct AstBlock<'a> {
 #[derive(Debug, Clone)]
 pub enum AstStmt<'a> {
     DeclVar(&'a AstStmtDeclVar<'a>),
-    SetVar(&'a AstStmtSetVar<'a>),
+    OpVar(&'a AstStmtOpVar<'a>),
     Expr(AstExpr<'a>),
 }
 
@@ -68,17 +68,31 @@ pub struct AstStmtDeclVar<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AstStmtSetVar<'a> {
+pub struct AstStmtOpVar<'a> {
     pub name: &'a str,
+    pub op: AstStmtVarOp,
     pub value: AstExpr<'a>,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AstStmtVarOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    And,
+    Xor,
+    Or,
 }
 
 #[derive(Debug, Clone)]
 pub enum AstExpr<'a> {
     BinOp(AstExprBinOp<'a>),
     UnOp(AstExprUnOp<'a>),
+    Var(&'a TokenIdent<'a>),
     Block(&'a AstBlock<'a>),
     Paren(&'a AstExpr<'a>),
+    Loop(&'a AstBlock<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -111,12 +125,12 @@ pub enum AstExprUnOperator {
     Neg,
 }
 
-// === Parser === //
+// === Parser Primitives === //
 
 fn is_reserved(id: &str) -> bool {
     matches!(
         id,
-        "struct" | "fn" | "let" | "loop" | "if" | "break" | "return" | "mut"
+        "struct" | "fn" | "let" | "loop" | "if" | "break" | "return" | "mut" | "while"
     )
 }
 
@@ -178,6 +192,8 @@ fn match_group(
         })
     }
 }
+
+// === Parser elements === //
 
 pub fn parse_module<'a>(
     bump: &'a Bump,
@@ -302,15 +318,85 @@ pub fn parse_block<'a>(
     p: &mut TokenParser<'a>,
 ) -> TokenResult<'a, &'a AstBlock<'a>> {
     let mut stmts = Vec::new();
-    loop {
+    'block_parse: loop {
         if p.expecting("}").try_match(|c| c.consume().is_none()) {
             break;
         }
 
-        if let Some(stmt) = parse_pure_stmt(bump, p)? {
-            stmts.push(stmt);
+        if p.expecting("let").try_match(match_keyword("let")) {
+            let is_mut = p.expecting("mut").try_match(match_keyword("mut"));
+
+            let Some(name) = p.expecting("variable name").try_match_hinted(match_ident) else {
+				return Err(p.unexpected(TokenUnexpectedFmt));
+			};
+
+            let ty = if p.expecting(":").try_match(match_punct(':')) {
+                Some(parse_type(bump, p)?)
+            } else {
+                None
+            };
+
+            let init = if p.expecting("=").try_match(match_punct('=')) {
+                Some(parse_expr(bump, p)?)
+            } else {
+                None
+            };
+
+            if !p.expecting(";").try_match(match_punct(';')) {
+                return Err(p.unexpected(TokenUnexpectedFmt));
+            }
+
+            stmts.push(AstStmt::DeclVar(bump.alloc(AstStmtDeclVar {
+                name: name.name,
+                is_mut,
+                ty,
+                init,
+            })));
+
             continue;
         }
+
+        if let Some(ident) = p.expecting("identifier").try_match_hinted(match_ident) {
+            // Try to match an operator
+            for (seq, op) in [
+                ("+=", AstStmtVarOp::Add),
+                ("-=", AstStmtVarOp::Sub),
+                ("*=", AstStmtVarOp::Mul),
+                ("/=", AstStmtVarOp::Div),
+                ("&=", AstStmtVarOp::And),
+                ("|=", AstStmtVarOp::Or),
+                ("^=", AstStmtVarOp::Xor),
+            ] {
+                if p.expecting(seq).try_match(match_punct_seq(seq)) {
+                    let value = parse_expr(bump, p)?;
+                    if !p.expecting(";").try_match(match_punct(';')) {
+                        return Err(p.unexpected(TokenUnexpectedFmt));
+                    }
+
+                    stmts.push(AstStmt::OpVar(bump.alloc(AstStmtOpVar {
+                        name: ident.name,
+                        op,
+                        value,
+                    })));
+                    continue 'block_parse;
+                }
+            }
+
+            // Try to match an expression
+            let expr = parse_expr_after_identifier(bump, p, ident)?;
+            if !p.expecting(";").try_match(match_punct(';')) {
+                return Err(p.unexpected(TokenUnexpectedFmt));
+            }
+            stmts.push(AstStmt::Expr(expr));
+            continue;
+        }
+
+        // Try to match an expression
+        let expr = parse_expr_not_identifier(bump, p)?;
+        if !p.expecting(";").try_match(match_punct(';')) {
+            return Err(p.unexpected(TokenUnexpectedFmt));
+        }
+        stmts.push(AstStmt::Expr(expr));
     }
 
     Ok(bump.alloc(AstBlock {
@@ -318,45 +404,18 @@ pub fn parse_block<'a>(
     }))
 }
 
-pub fn parse_pure_stmt<'a>(
-    bump: &'a Bump,
-    p: &mut TokenParser<'a>,
-) -> TokenResult<'a, Option<AstStmt<'a>>> {
-    if p.expecting("let").try_match(match_keyword("let")) {
-        let is_mut = p.expecting("mut").try_match(match_keyword("mut"));
-
-        let Some(name) = p.expecting("variable name").try_match_hinted(match_ident) else {
-			return Err(p.unexpected(TokenUnexpectedFmt));
-		};
-
-        let ty = if p.expecting(":").try_match(match_punct(':')) {
-            Some(parse_type(bump, p)?)
-        } else {
-            None
-        };
-
-        let init = if p.expecting("=").try_match(match_punct('=')) {
-            Some(parse_expr(bump, p)?)
-        } else {
-            None
-        };
-
-        if !p.expecting(";").try_match(match_punct(';')) {
-            return Err(p.unexpected(TokenUnexpectedFmt));
-        }
-
-        return Ok(Some(AstStmt::DeclVar(bump.alloc(AstStmtDeclVar {
-            name: name.name,
-            is_mut,
-            ty,
-            init,
-        }))));
+pub fn parse_expr<'a>(bump: &'a Bump, p: &mut TokenParser<'a>) -> TokenResult<'a, AstExpr<'a>> {
+    if let Some(ident) = p.expecting("identifier").try_match_hinted(match_ident) {
+        return parse_expr_after_identifier(bump, p, ident);
     }
 
-    Ok(None)
+    parse_expr_not_identifier(bump, p)
 }
 
-pub fn parse_expr<'a>(bump: &'a Bump, p: &mut TokenParser<'a>) -> TokenResult<'a, AstExpr<'a>> {
+pub fn parse_expr_not_identifier<'a>(
+    bump: &'a Bump,
+    p: &mut TokenParser<'a>,
+) -> TokenResult<'a, AstExpr<'a>> {
     if let Some(group) = p
         .expecting("{")
         .try_match(match_group(GroupDelimiter::Brace))
@@ -364,5 +423,39 @@ pub fn parse_expr<'a>(bump: &'a Bump, p: &mut TokenParser<'a>) -> TokenResult<'a
         return Ok(AstExpr::Block(parse_block(bump, &mut group.parser())?));
     }
 
+    if p.expecting("if").try_match(match_keyword("if")) {
+        let pred = parse_expr(bump, p)?;
+        let Some(truthy_tt) = p.expecting("{").try_match(match_group(GroupDelimiter::Brace)) else {
+			return Err(p.unexpected(TokenUnexpectedFmt));
+		};
+        let truthy_block = parse_block(bump, &mut truthy_tt.parser())?;
+
+        return Err(ParseError::new_invalid(
+            p.cursor().span_one(),
+            "this is not implemented",
+        ));
+    }
+
+    if p.expecting("loop").try_match(match_keyword("loop")) {
+        let Some(loop_tt) = p
+            .expecting("{")
+            .try_match(match_group(GroupDelimiter::Brace))
+		else {
+			return Err(p.unexpected(TokenUnexpectedFmt));
+		};
+
+        let block = parse_block(bump, &mut loop_tt.parser())?;
+
+        return Ok(AstExpr::Loop(bump.alloc(block)));
+    }
+
     Err(p.unexpected(TokenUnexpectedFmt))
+}
+
+pub fn parse_expr_after_identifier<'a>(
+    bump: &'a Bump,
+    p: &mut TokenParser<'a>,
+    ident: &'a TokenIdent,
+) -> TokenResult<'a, AstExpr<'a>> {
+    Ok(AstExpr::Var(ident))
 }
