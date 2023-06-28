@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    fmt,
+    hash::{self, Hasher},
+};
 
 // === UnsizedVec === //
 
@@ -163,3 +166,19 @@ impl<T, E: fmt::Display> UnwrapPrettyExt for Result<T, E> {
         self.unwrap_or_else(|err| panic!("{msg}: {err:#}"))
     }
 }
+
+// === Hashers === //
+
+pub type FxHashBuilder = hash::BuildHasherDefault<rustc_hash::FxHasher>;
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxHashBuilder>;
+pub type FxHashSet<T> = hashbrown::HashSet<T, FxHashBuilder>;
+
+pub trait HashBuilderExt: Sized + hash::BuildHasher {
+    fn hash_one<H: ?Sized + hash::Hash>(&self, target: &H) -> u64 {
+        let mut hasher = self.build_hasher();
+        target.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl<T: hash::BuildHasher> HashBuilderExt for T {}

@@ -9,8 +9,6 @@ use super::token::{
 
 // === IR === //
 
-// FIXME: Ensure that bump allocated values are actually dropped if they need it.
-
 #[derive(Debug, Clone)]
 pub struct AstModule<'a> {
     pub items: &'a [AstModuleItem<'a>],

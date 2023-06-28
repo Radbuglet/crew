@@ -5,4 +5,8 @@ edition = "2021"
 
 [dependencies]
 bumpalo = "3.13.0"
+cfgenius = "0.1.0"
+derive-where = "1.2.1"
+hashbrown = { version = "0.14.0", features = ["raw"] }
 unicode-xid = "0.2.4"
+rustc-hash = "1.1.0"
